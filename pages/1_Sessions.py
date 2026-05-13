@@ -137,6 +137,13 @@ WHERE p.id IN (
     SELECT player_id
     FROM myzone_data
     WHERE session_id = ?
+
+    UNION
+
+    SELECT player_id
+    FROM suunto_data
+    WHERE session_id = ?
+
 )
 ORDER BY p.surname
 """
@@ -145,9 +152,10 @@ players_df = pd.read_sql_query(
     players_query,
     conn,
     params=(
-    session_id,
-    session_id
-)
+        session_id,
+        session_id,
+        session_id
+    )
 )
 
 
@@ -187,13 +195,20 @@ else:
 # =========================
 
 st.header(
-    "Comparador FC"
+    "Comparador"
 )
+
+
+# =========================
+# COROS
+# =========================
 
 coros_query = """
 SELECT
     cd.timestamp,
     cd.heart_rate,
+    cd.distance,
+    cd.speed,
     p.name,
     p.surname,
     p.id as player_id,
@@ -209,6 +224,11 @@ coros_df = pd.read_sql_query(
     conn,
     params=(session_id,)
 )
+
+
+# =========================
+# MYZONE
+# =========================
 
 myzone_query = """
 SELECT
@@ -230,23 +250,78 @@ myzone_df = pd.read_sql_query(
     params=(session_id,)
 )
 
+# MYZONE NO TIENE DISTANCIA NI VELOCIDAD
+myzone_df["distance"] = None
+myzone_df["speed"] = None
+
+
 # =========================
-# PRIORIDAD COROS
+# SUUNTO
 # =========================
+
+suunto_query = """
+SELECT
+    sd.timestamp,
+    sd.heart_rate,
+    sd.distance,
+    sd.speed,
+    p.name,
+    p.surname,
+    p.id as player_id,
+    'SUUNTO' as source
+FROM suunto_data sd
+JOIN players p
+    ON sd.player_id = p.id
+WHERE sd.session_id = ?
+"""
+
+suunto_df = pd.read_sql_query(
+    suunto_query,
+    conn,
+    params=(session_id,)
+)
+
+
+# =========================
+# PRIORIDAD DISPOSITIVOS
+# =========================
+
+# PRIORIDAD:
+# COROS > SUUNTO > MYZONE
 
 coros_players = set(
     coros_df["player_id"].unique()
 )
 
+suunto_players = set(
+    suunto_df["player_id"].unique()
+)
+
+# MYZONE SOLO SI NO EXISTE COROS NI SUUNTO
 myzone_filtered = myzone_df[
     ~myzone_df["player_id"].isin(
+        coros_players.union(
+            suunto_players
+        )
+    )
+]
+
+# SUUNTO SOLO SI NO EXISTE COROS
+suunto_filtered = suunto_df[
+    ~suunto_df["player_id"].isin(
         coros_players
     )
 ]
 
+
+# =========================
+# COMBINE DATA
+# =========================
+
 hr_df = pd.concat(
     [
         coros_df,
+        suunto_filtered,
         myzone_filtered
     ],
     ignore_index=True
@@ -265,128 +340,232 @@ if hr_df.empty:
         "No hay datos cardíacos"
     )
 
-else:
+    st.stop()
 
-    # =========================
-    # PLAYER OPTIONS
-    # =========================
 
-    hr_df["player_name"] = (
-        hr_df["surname"] +
-        ", " +
-        hr_df["name"]
+# =========================
+# PLAYER NAME
+# =========================
+
+hr_df["player_name"] = (
+    hr_df["surname"] +
+    ", " +
+    hr_df["name"]
+)
+
+
+# =========================
+# TIMESTAMP
+# =========================
+
+hr_df["timestamp"] = (
+    pd.to_datetime(
+        hr_df["timestamp"]
+    )
+    .dt.tz_localize(None)
+)
+
+
+# =========================
+# PLAYER SELECTOR
+# =========================
+
+player_options = sorted(
+    hr_df["player_name"].unique()
+)
+
+selected_players = st.multiselect(
+    "Seleccionar jugadoras",
+    player_options,
+    default=player_options[:2],
+    max_selections=3
+)
+
+if len(selected_players) == 0:
+
+    st.warning(
+        "Selecciona al menos una jugadora"
     )
 
-    player_options = sorted(
-        hr_df["player_name"].unique()
-    )
+    st.stop()
 
-    c1, c2 = st.columns(2)
 
-    with c1:
+# =========================
+# HR FIGURE
+# =========================
 
-        player_1 = st.selectbox(
-            "Jugadora 1",
-            player_options,
-            index=0
-        )
+st.subheader(
+    "Frecuencia cardíaca"
+)
 
-    with c2:
+fig_hr, ax_hr = plt.subplots(
+    figsize=(14, 6)
+)
 
-        default_index = (
-            1 if len(player_options) > 1
-            else 0
-        )
 
-        player_2 = st.selectbox(
-            "Jugadora 2",
-            player_options,
-            index=default_index
-        )
+# =========================
+# SPEED FIGURE
+# =========================
 
-    # =========================
-    # FILTER PLAYERS
-    # =========================
+st.subheader(
+    "Velocidad"
+)
 
-    player_1_df = hr_df[
-        hr_df["player_name"] == player_1
+fig_speed, ax_speed = plt.subplots(
+    figsize=(14, 6)
+)
+
+
+# =========================
+# DISTANCE FIGURE
+# =========================
+
+st.subheader(
+    "Distancia"
+)
+
+fig_dist, ax_dist = plt.subplots(
+    figsize=(14, 6)
+)
+
+
+# =========================
+# LOOP PLAYERS
+# =========================
+
+for player in selected_players:
+
+    player_df = hr_df[
+        hr_df["player_name"] == player
     ].copy()
 
-    player_2_df = hr_df[
-        hr_df["player_name"] == player_2
-    ].copy()
+    if player_df.empty:
+        continue
 
-    # =========================
-    # TIMESTAMP
-    # =========================
-
-    player_1_df["timestamp"] = (
-        pd.to_datetime(
-            player_1_df["timestamp"]
-        )
-        .dt.tz_localize(None)
-    )
-
-    player_2_df["timestamp"] = (
-        pd.to_datetime(
-            player_2_df["timestamp"]
-        )
-        .dt.tz_localize(None)
+    player_df = player_df.sort_values(
+        "timestamp"
     )
 
     # =========================
     # NORMALIZE TIME
     # =========================
 
-    start_time = min(
-        player_1_df["timestamp"].min(),
-        player_2_df["timestamp"].min()
-    )
+    start_time = player_df[
+        "timestamp"
+    ].min()
 
-    player_1_df["minutes"] = (
-        player_1_df["timestamp"] - start_time
-    ).dt.total_seconds() / 60
-
-    player_2_df["minutes"] = (
-        player_2_df["timestamp"] - start_time
+    player_df["minutes"] = (
+        player_df["timestamp"] - start_time
     ).dt.total_seconds() / 60
 
     # =========================
-    # PLOT
+    # HEART RATE
     # =========================
 
-    fig, ax = plt.subplots(
-        figsize=(14, 6)
-    )
-
-    ax.plot(
-        player_1_df["minutes"],
-        player_1_df["heart_rate"],
-        label=player_1,
+    ax_hr.plot(
+        player_df["minutes"],
+        player_df["heart_rate"],
+        label=player,
         linewidth=2
     )
 
-    ax.plot(
-        player_2_df["minutes"],
-        player_2_df["heart_rate"],
-        label=player_2,
-        linewidth=2
-    )
+    # =========================
+    # SPEED
+    # =========================
 
-    ax.set_xlabel(
-        "Minutos"
-    )
+    if (
+        "speed" in player_df.columns and
+        player_df["speed"].notna().any()
+    ):
 
-    ax.set_ylabel(
-        "FC"
-    )
+        ax_speed.plot(
+            player_df["minutes"],
+            player_df["speed"],
+            label=player,
+            linewidth=2
+        )
 
-    ax.set_title(
-        "Comparativa frecuencia cardíaca"
-    )
+    # =========================
+    # DISTANCE
+    # =========================
 
-    ax.legend()
+    if (
+        "distance" in player_df.columns and
+        player_df["distance"].notna().any()
+    ):
 
-    ax.grid(True)
+        ax_dist.plot(
+            player_df["minutes"],
+            player_df["distance"],
+            label=player,
+            linewidth=2
+        )
 
-    st.pyplot(fig)
+
+# =========================
+# FORMAT HR
+# =========================
+
+ax_hr.set_xlabel(
+    "Minutos"
+)
+
+ax_hr.set_ylabel(
+    "FC"
+)
+
+ax_hr.set_title(
+    "Comparativa frecuencia cardíaca"
+)
+
+ax_hr.legend()
+
+ax_hr.grid(True)
+
+st.pyplot(fig_hr)
+
+
+# =========================
+# FORMAT SPEED
+# =========================
+
+ax_speed.set_xlabel(
+    "Minutos"
+)
+
+ax_speed.set_ylabel(
+    "Velocidad"
+)
+
+ax_speed.set_title(
+    "Comparativa velocidad"
+)
+
+ax_speed.legend()
+
+ax_speed.grid(True)
+
+st.pyplot(fig_speed)
+
+
+# =========================
+# FORMAT DISTANCE
+# =========================
+
+ax_dist.set_xlabel(
+    "Minutos"
+)
+
+ax_dist.set_ylabel(
+    "Distancia"
+)
+
+ax_dist.set_title(
+    "Comparativa distancia"
+)
+
+ax_dist.legend()
+
+ax_dist.grid(True)
+
+st.pyplot(fig_dist)

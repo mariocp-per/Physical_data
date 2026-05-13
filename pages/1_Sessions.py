@@ -191,7 +191,7 @@ else:
 
 
 # =========================
-# HR COMPARISON
+# COMPARADOR
 # =========================
 
 st.header(
@@ -283,46 +283,14 @@ suunto_df = pd.read_sql_query(
 
 
 # =========================
-# PRIORIDAD DISPOSITIVOS
-# =========================
-
-# PRIORIDAD:
-# COROS > SUUNTO > MYZONE
-
-coros_players = set(
-    coros_df["player_id"].unique()
-)
-
-suunto_players = set(
-    suunto_df["player_id"].unique()
-)
-
-# MYZONE SOLO SI NO EXISTE COROS NI SUUNTO
-myzone_filtered = myzone_df[
-    ~myzone_df["player_id"].isin(
-        coros_players.union(
-            suunto_players
-        )
-    )
-]
-
-# SUUNTO SOLO SI NO EXISTE COROS
-suunto_filtered = suunto_df[
-    ~suunto_df["player_id"].isin(
-        coros_players
-    )
-]
-
-
-# =========================
 # COMBINE DATA
 # =========================
 
 hr_df = pd.concat(
     [
         coros_df,
-        suunto_filtered,
-        myzone_filtered
+        suunto_df,
+        myzone_df
     ],
     ignore_index=True
 )
@@ -337,7 +305,7 @@ conn.close()
 if hr_df.empty:
 
     st.info(
-        "No hay datos cardíacos"
+        "No hay datos"
     )
 
     st.stop()
@@ -350,7 +318,10 @@ if hr_df.empty:
 hr_df["player_name"] = (
     hr_df["surname"] +
     ", " +
-    hr_df["name"]
+    hr_df["name"] +
+    " (" +
+    hr_df["source"] +
+    ")"
 )
 
 
@@ -360,14 +331,14 @@ hr_df["player_name"] = (
 
 hr_df["timestamp"] = pd.to_datetime(
     hr_df["timestamp"],
-    errors="coerce",
-    utc=True
-).dt.tz_localize(None)
+    errors="coerce"
+)
 
 # eliminar timestamps inválidos
 hr_df = hr_df.dropna(
     subset=["timestamp"]
 )
+
 
 # =========================
 # PLAYER SELECTOR
@@ -378,7 +349,7 @@ player_options = sorted(
 )
 
 selected_players = st.multiselect(
-    "Seleccionar jugadoras",
+    "Seleccionar jugadoras/dispositivos",
     player_options,
     default=player_options[:2],
     max_selections=3
@@ -394,7 +365,7 @@ if len(selected_players) == 0:
 
 
 # =========================
-# HR FIGURE
+# HEART RATE FIGURE
 # =========================
 
 st.subheader(
@@ -465,12 +436,14 @@ for player in selected_players:
     # HEART RATE
     # =========================
 
-    ax_hr.plot(
-        player_df["minutes"],
-        player_df["heart_rate"],
-        label=player,
-        linewidth=2
-    )
+    if player_df["heart_rate"].notna().any():
+
+        ax_hr.plot(
+            player_df["minutes"],
+            player_df["heart_rate"],
+            label=player,
+            linewidth=2
+        )
 
     # =========================
     # SPEED

@@ -2,7 +2,7 @@ import fitdecode
 import pandas as pd
 
 
-def load_coros_fit(file_path):
+def load_fit_file(file_path):
 
     records = []
 

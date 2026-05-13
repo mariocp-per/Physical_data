@@ -4,7 +4,6 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 
-
 from database.player_repository import (
     get_players
 )
@@ -14,7 +13,6 @@ from database.db import get_connection
 from metrics.hr_metrics import (
     build_hr_summary
 )
-
 
 # =========================
 # PAGE CONFIG
@@ -27,7 +25,6 @@ st.set_page_config(
 
 st.title("👥 Jugadoras")
 
-
 # =========================
 # LOAD PLAYERS
 # =========================
@@ -39,7 +36,6 @@ if players.empty:
     st.warning("No hay jugadoras")
 
     st.stop()
-
 
 # =========================
 # PLAYER SELECTOR
@@ -58,7 +54,6 @@ selected_player = st.selectbox(
 player_id = player_options[
     selected_player
 ]
-
 
 # =========================
 # PLAYER INFO
@@ -92,7 +87,6 @@ c4.metric(
     player_row["dorsal"]
 )
 
-
 # =========================
 # LOAD PLAYER DATA
 # =========================
@@ -125,6 +119,9 @@ myzone_df = pd.read_sql_query(
 
 conn.close()
 
+# =========================
+# SESSION COUNTS
+# =========================
 
 coros_sessions = 0
 myzone_sessions = 0
@@ -149,89 +146,78 @@ total_sessions = max(
 )
 
 # =========================
+# HISTORICAL METRICS
+# =========================
+
+historical_hr_max = None
+historical_hr_mean = None
+historical_speed_max = None
+
+if not coros_df.empty:
+
+    # FC MAX HISTÓRICA
+    historical_hr_max = int(
+        coros_df["heart_rate"].max()
+    )
+
+    # FC MEDIA TODAS LAS SESIONES
+    historical_hr_mean = round(
+        coros_df["heart_rate"].mean(),
+        1
+    )
+
+    # VELOCIDAD MÁXIMA HISTÓRICA
+    if "speed" in coros_df.columns:
+
+        # COROS viene en m/s -> km/h
+        historical_speed_max = round(
+            coros_df["speed"].max() * 3.6,
+            2
+        )
+
+elif not myzone_df.empty:
+
+    historical_hr_max = int(
+        myzone_df["heart_rate"].max()
+    )
+
+    historical_hr_mean = round(
+        myzone_df["heart_rate"].mean(),
+        1
+    )
+
+# =========================
 # METRICS
 # =========================
 
 st.header("Métricas")
 
-# PRIORIDAD COROS
-if not coros_df.empty:
-
-    summary = build_hr_summary(
-        coros_df,
-        sample_seconds=1
-    )
-
-elif not myzone_df.empty:
-
-    summary = build_hr_summary(
-        myzone_df,
-        sample_seconds=60
-    )
-
-else:
-
-    summary = {}
-
-if summary:
+if historical_hr_max is not None:
 
     m1, m2, m3, m4 = st.columns(4)
 
     m1.metric(
-        "FC máxima",
-        summary["hr_max"]
+        "FC máxima histórica",
+        historical_hr_max
     )
 
     m2.metric(
         "FC media",
-        summary["hr_mean"]
+        historical_hr_mean
     )
 
     m3.metric(
         "Velocidad máxima",
-        summary.get(
-            "max_speed",
-            None
+        (
+            f"{historical_speed_max} km/h"
+            if historical_speed_max is not None
+            else "-"
         )
     )
 
     m4.metric(
-    "Sesiones",
-    total_sessions
-    )
-
-    st.subheader("Tiempo en zonas")
-
-    zones_df = summary["zones"].copy()
-
-    zone_ranges = summary["zone_ranges"]
-
-    zones_df["bpm_range"] = zones_df[
-        "zone"
-    ].apply(
-        lambda z:
-        f"{int(zone_ranges[z][0])}"
-        f" - "
-        f"{int(zone_ranges[z][1])}"
-    )
-
-    zones_df = zones_df[
-        [
-            "zone",
-            "bpm_range",
-            "minutes"
-        ]
-    ]
-
-    zones_df.columns = [
-        "Zona",
-        "Rango BPM",
-        "Minutos"
-    ]
-
-    st.dataframe(
-        zones_df,
-        use_container_width=True
+        "Sesiones",
+        total_sessions
     )
 
 else:
@@ -239,34 +225,120 @@ else:
     st.info(
         "No hay datos monitorizados"
     )
+
 # =========================
-# HR TIMELINE
+# ZONES BASED ON HISTORICAL HR MAX
 # =========================
 
-st.header(
-    "Frecuencia cardíaca"
-)
+if historical_hr_max is not None:
+
+    z1 = historical_hr_max * 0.60
+    z2 = historical_hr_max * 0.70
+    z3 = historical_hr_max * 0.80
+    z4 = historical_hr_max * 0.90
+
+    def calculate_zones(df, sample_seconds):
+
+        zones = {
+            "Z1": 0,
+            "Z2": 0,
+            "Z3": 0,
+            "Z4": 0,
+            "Z5": 0
+        }
+
+        for hr in df["heart_rate"].dropna():
+
+            if hr < z1:
+
+                zones["Z1"] += sample_seconds
+
+            elif hr < z2:
+
+                zones["Z2"] += sample_seconds
+
+            elif hr < z3:
+
+                zones["Z3"] += sample_seconds
+
+            elif hr < z4:
+
+                zones["Z4"] += sample_seconds
+
+            else:
+
+                zones["Z5"] += sample_seconds
+
+        zones_df = pd.DataFrame({
+            "Zona": list(zones.keys()),
+            "Minutos": [
+                round(v / 60, 1)
+                for v in zones.values()
+            ]
+        })
+
+        ranges = {
+            "Z1": f"< {int(z1)}",
+            "Z2": f"{int(z1)} - {int(z2)}",
+            "Z3": f"{int(z2)} - {int(z3)}",
+            "Z4": f"{int(z3)} - {int(z4)}",
+            "Z5": f"> {int(z4)}"
+        }
+
+        zones_df["Rango BPM"] = (
+            zones_df["Zona"]
+            .map(ranges)
+        )
+
+        return zones_df[
+            [
+                "Zona",
+                "Rango BPM",
+                "Minutos"
+            ]
+        ]
+
+    st.subheader("Tiempo en zonas")
+
+    if not coros_df.empty:
+
+        zones_df = calculate_zones(
+            coros_df,
+            sample_seconds=1
+        )
+
+    else:
+
+        zones_df = calculate_zones(
+            myzone_df,
+            sample_seconds=60
+        )
+
+    st.dataframe(
+        zones_df,
+        use_container_width=True
+    )
+
+# =========================
+# SESSION SELECTOR
+# =========================
+
+st.header("Comparación de sesiones")
 
 conn = get_connection()
 
-# =========================
-# LAST 3 SESSIONS
-# =========================
-
 sessions_query = """
-SELECT DISTINCT
-    session_id
+SELECT DISTINCT session_id
 FROM coros_data
 WHERE player_id = ?
 
 UNION
 
-SELECT DISTINCT
-    session_id
+SELECT DISTINCT session_id
 FROM myzone_data
 WHERE player_id = ?
+
 ORDER BY session_id DESC
-LIMIT 3
 """
 
 sessions_df = pd.read_sql_query(
@@ -278,32 +350,48 @@ sessions_df = pd.read_sql_query(
     )
 )
 
-last_sessions = sessions_df[
+available_sessions = sessions_df[
     "session_id"
 ].tolist()
 
+selected_sessions = st.multiselect(
+    "Seleccionar sesiones",
+    available_sessions,
+    default=available_sessions[:3]
+)
+
+conn.close()
+
+if len(selected_sessions) == 0:
+
+    st.stop()
+
 # =========================
-# LOAD DATA
+# LOAD TIMELINE DATA
 # =========================
+
+conn = get_connection()
 
 coros_query = """
 SELECT
     timestamp,
+    session_id,
     heart_rate,
-    session_id
+    speed,
+    distance
 FROM coros_data
 WHERE player_id = ?
 AND session_id IN ({})
 ORDER BY timestamp
 """.format(
     ",".join(
-        ["?"] * len(last_sessions)
+        ["?"] * len(selected_sessions)
     )
 )
 
 coros_params = [
     player_id
-] + last_sessions
+] + selected_sessions
 
 coros_timeline = pd.read_sql_query(
     coros_query,
@@ -314,21 +402,21 @@ coros_timeline = pd.read_sql_query(
 myzone_query = """
 SELECT
     timestamp,
-    heart_rate,
-    session_id
+    session_id,
+    heart_rate
 FROM myzone_data
 WHERE player_id = ?
 AND session_id IN ({})
 ORDER BY timestamp
 """.format(
     ",".join(
-        ["?"] * len(last_sessions)
+        ["?"] * len(selected_sessions)
     )
 )
 
 myzone_params = [
     player_id
-] + last_sessions
+] + selected_sessions
 
 myzone_timeline = pd.read_sql_query(
     myzone_query,
@@ -348,11 +436,15 @@ if not coros_timeline.empty:
 
     sample_seconds = 1
 
+    source = "coros"
+
 else:
 
     timeline_df = myzone_timeline.copy()
 
     sample_seconds = 60
+
+    source = "myzone"
 
 # =========================
 # VALIDATION
@@ -361,55 +453,100 @@ else:
 if timeline_df.empty:
 
     st.info(
-        "No hay datos cardíacos"
+        "No hay datos"
     )
 
-else:
+    st.stop()
 
-    timeline_df["timestamp"] = (
-        pd.to_datetime(
-            timeline_df["timestamp"]
-        )
-        .dt.tz_localize(None)
+timeline_df["timestamp"] = (
+    pd.to_datetime(
+        timeline_df["timestamp"]
+    )
+    .dt.tz_localize(None)
+)
+
+# =========================
+# COLORS
+# =========================
+
+session_colors = [
+    "blue",
+    "red",
+    "green",
+    "orange",
+    "purple",
+    "black"
+]
+
+# =========================
+# HR GRAPH
+# =========================
+
+st.subheader(
+    "Frecuencia cardíaca"
+)
+
+fig_hr, ax_hr = plt.subplots(
+    figsize=(14, 5)
+)
+
+for idx, session in enumerate(selected_sessions):
+
+    session_df = timeline_df[
+        timeline_df["session_id"] == session
+    ].copy()
+
+    if session_df.empty:
+
+        continue
+
+    session_df = session_df.sort_values(
+        "timestamp"
     )
 
-    # =========================
-    # ZONE FUNCTION
-    # =========================
+    start_time = session_df[
+        "timestamp"
+    ].min()
 
-    def get_zone_color(
-        hr,
-        z1,
-        z2,
-        z3,
-        z4
-    ):
+    session_df["minutes"] = (
+        session_df["timestamp"] - start_time
+    ).dt.total_seconds() / 60
 
-        if hr < z1:
+    ax_hr.plot(
+        session_df["minutes"],
+        session_df["heart_rate"],
+        label=f"Sesión {session}",
+        linewidth=2,
+        color=session_colors[
+            idx % len(session_colors)
+        ]
+    )
 
-            return "darkgreen"
+ax_hr.set_xlabel("Minutos")
+ax_hr.set_ylabel("FC")
+ax_hr.grid(True)
+ax_hr.legend()
 
-        elif hr < z2:
+st.pyplot(fig_hr)
 
-            return "blue"
+# =========================
+# SPEED GRAPH
+# =========================
 
-        elif hr < z3:
+if (
+    source == "coros"
+    and "speed" in timeline_df.columns
+):
 
-            return "yellow"
+    st.subheader(
+        "Velocidad"
+    )
 
-        elif hr < z4:
+    fig_speed, ax_speed = plt.subplots(
+        figsize=(14, 5)
+    )
 
-            return "orange"
-
-        else:
-
-            return "red"
-
-    # =========================
-    # DRAW SESSION BY SESSION
-    # =========================
-
-    for session in last_sessions:
+    for idx, session in enumerate(selected_sessions):
 
         session_df = timeline_df[
             timeline_df["session_id"] == session
@@ -423,13 +560,66 @@ else:
             "timestamp"
         )
 
-        st.subheader(
-            f"Sesión {session}"
+        start_time = session_df[
+            "timestamp"
+        ].min()
+
+        session_df["minutes"] = (
+            session_df["timestamp"] - start_time
+        ).dt.total_seconds() / 60
+
+        # m/s -> km/h
+        session_df["speed_kmh"] = (
+            session_df["speed"] * 3.6
         )
 
-        # =========================
-        # TIME
-        # =========================
+        ax_speed.plot(
+            session_df["minutes"],
+            session_df["speed_kmh"],
+            label=f"Sesión {session}",
+            linewidth=2,
+            color=session_colors[
+                idx % len(session_colors)
+            ]
+        )
+
+    ax_speed.set_xlabel("Minutos")
+    ax_speed.set_ylabel("km/h")
+    ax_speed.grid(True)
+    ax_speed.legend()
+
+    st.pyplot(fig_speed)
+
+# =========================
+# DISTANCE GRAPH
+# =========================
+
+if (
+    source == "coros"
+    and "distance" in timeline_df.columns
+):
+
+    st.subheader(
+        "Distancia acumulada"
+    )
+
+    fig_dist, ax_dist = plt.subplots(
+        figsize=(14, 5)
+    )
+
+    for idx, session in enumerate(selected_sessions):
+
+        session_df = timeline_df[
+            timeline_df["session_id"] == session
+        ].copy()
+
+        if session_df.empty:
+
+            continue
+
+        session_df = session_df.sort_values(
+            "timestamp"
+        )
 
         start_time = session_df[
             "timestamp"
@@ -439,226 +629,24 @@ else:
             session_df["timestamp"] - start_time
         ).dt.total_seconds() / 60
 
-        # =========================
-        # SESSION FC MAX
-        # =========================
-
-        hr_max = session_df[
-            "heart_rate"
-        ].max()
-
-        # =========================
-        # ZONES
-        # =========================
-
-        z1 = hr_max * 0.60
-        z2 = hr_max * 0.70
-        z3 = hr_max * 0.80
-        z4 = hr_max * 0.90
-
-        zone_limits = [
-            z1,
-            z2,
-            z3,
-            z4
-        ]
-
-        # =========================
-        # FIGURE
-        # =========================
-
-        fig, ax = plt.subplots(
-            figsize=(14, 4)
+        # metros -> km
+        session_df["distance_km"] = (
+            session_df["distance"] / 1000
         )
 
-        ax.set_facecolor(
-            "white"
+        ax_dist.plot(
+            session_df["minutes"],
+            session_df["distance_km"],
+            label=f"Sesión {session}",
+            linewidth=2,
+            color=session_colors[
+                idx % len(session_colors)
+            ]
         )
 
-        # =========================
-        # COROS
-        # =========================
+    ax_dist.set_xlabel("Minutos")
+    ax_dist.set_ylabel("Kilómetros")
+    ax_dist.grid(True)
+    ax_dist.legend()
 
-        if sample_seconds == 1:
-
-            colors = []
-
-            for hr in session_df[
-                "heart_rate"
-            ]:
-
-                colors.append(
-                    get_zone_color(
-                        hr,
-                        z1,
-                        z2,
-                        z3,
-                        z4
-                    )
-                )
-
-            ax.scatter(
-                session_df["minutes"],
-                session_df["heart_rate"],
-                c=colors,
-                s=10,
-                alpha=0.9,
-                linewidths=0
-            )
-
-        # =========================
-        # MYZONE
-        # =========================
-
-        else:
-
-            session_df["minute_bin"] = (
-                session_df["minutes"]
-                .round()
-            )
-
-            myzone_minute = (
-                session_df
-                .groupby("minute_bin")
-                .agg({
-                    "heart_rate": "mean"
-                })
-                .reset_index()
-            )
-
-            for i in range(
-                len(myzone_minute) - 1
-            ):
-
-                x1 = myzone_minute.iloc[i][
-                    "minute_bin"
-                ]
-
-                x2 = myzone_minute.iloc[i + 1][
-                    "minute_bin"
-                ]
-
-                y1 = myzone_minute.iloc[i][
-                    "heart_rate"
-                ]
-
-                y2 = myzone_minute.iloc[i + 1][
-                    "heart_rate"
-                ]
-
-                # =========================
-                # FIND CROSSES
-                # =========================
-
-                crossings = []
-
-                for limit in zone_limits:
-
-                    if (
-                        (y1 < limit and y2 > limit)
-                        or
-                        (y1 > limit and y2 < limit)
-                    ):
-
-                        ratio = (
-                            (limit - y1)
-                            /
-                            (y2 - y1)
-                        )
-
-                        cross_x = (
-                            x1 +
-                            ratio * (x2 - x1)
-                        )
-
-                        crossings.append(
-                            (
-                                cross_x,
-                                limit
-                            )
-                        )
-
-                # =========================
-                # BUILD SEGMENTS
-                # =========================
-
-                points = [
-                    (x1, y1)
-                ]
-
-                points.extend(
-                    crossings
-                )
-
-                points.append(
-                    (x2, y2)
-                )
-
-                points = sorted(
-                    points,
-                    key=lambda p: p[0]
-                )
-
-                # =========================
-                # DRAW SEGMENTS
-                # =========================
-
-                for j in range(
-                    len(points) - 1
-                ):
-
-                    px1, py1 = points[j]
-
-                    px2, py2 = points[j + 1]
-
-                    mid_hr = (
-                        py1 + py2
-                    ) / 2
-
-                    color = get_zone_color(
-                        mid_hr,
-                        z1,
-                        z2,
-                        z3,
-                        z4
-                    )
-
-                    ax.plot(
-                        [px1, px2],
-                        [py1, py2],
-                        color=color,
-                        linewidth=4,
-                        solid_capstyle="round"
-                    )
-
-        # =========================
-        # AXIS
-        # =========================
-
-        ax.set_xlabel(
-            "Minutos"
-        )
-
-        ax.set_ylabel(
-            "FC"
-        )
-
-        ax.set_title(
-            f"Frecuencia cardíaca - Sesión {session}"
-        )
-
-        ax.grid(True)
-
-        max_minutes = int(
-            session_df["minutes"].max()
-        )
-
-        ax.set_xticks(
-            range(
-                0,
-                max_minutes + 5,
-                5
-            )
-        )
-
-        st.pyplot(fig)
+    st.pyplot(fig_dist)

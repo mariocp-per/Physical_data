@@ -208,33 +208,28 @@ if len(all_speed) > 0:
 # TOTAL SESSIONS
 # =========================
 
-all_sessions = []
+total_sessions = 0
 
 if not coros_df.empty:
 
-    all_sessions.extend(
+    total_sessions += (
         coros_df["session_id"]
-        .dropna()
-        .tolist()
+        .nunique()
     )
 
 if not myzone_df.empty:
 
-    all_sessions.extend(
+    total_sessions += (
         myzone_df["session_id"]
-        .dropna()
-        .tolist()
+        .nunique()
     )
 
 if not suunto_df.empty:
 
-    all_sessions.extend(
+    total_sessions += (
         suunto_df["session_id"]
-        .dropna()
-        .tolist()
+        .nunique()
     )
-
-total_sessions = len(all_sessions)
 
 # =========================
 # METRICS
@@ -268,12 +263,6 @@ if historical_hr_max is not None:
     m4.metric(
         "Sesiones",
         total_sessions
-    )
-
-else:
-
-    st.info(
-        "No hay datos monitorizados"
     )
 
 # =========================
@@ -377,6 +366,7 @@ conn = get_connection()
 sessions_query = """
 SELECT
     session_id,
+    MIN(timestamp) as session_start,
     MAX(timestamp) as session_date,
     'COROS' as device
 FROM coros_data
@@ -387,6 +377,7 @@ UNION ALL
 
 SELECT
     session_id,
+    MIN(timestamp) as session_start,
     MAX(timestamp) as session_date,
     'MYZONE' as device
 FROM myzone_data
@@ -397,6 +388,7 @@ UNION ALL
 
 SELECT
     session_id,
+    MIN(timestamp) as session_start,
     MAX(timestamp) as session_date,
     'SUUNTO' as device
 FROM suunto_data
@@ -418,6 +410,12 @@ sessions_df = pd.read_sql_query(
 # SAFE DATETIME PARSING
 # =========================
 
+sessions_df["session_start"] = pd.to_datetime(
+    sessions_df["session_start"],
+    errors="coerce",
+    utc=True
+).dt.tz_localize(None)
+
 sessions_df["session_date"] = pd.to_datetime(
     sessions_df["session_date"],
     errors="coerce",
@@ -425,7 +423,10 @@ sessions_df["session_date"] = pd.to_datetime(
 ).dt.tz_localize(None)
 
 sessions_df = sessions_df.dropna(
-    subset=["session_date"]
+    subset=[
+        "session_start",
+        "session_date"
+    ]
 )
 
 sessions_df = sessions_df.sort_values(
@@ -434,13 +435,24 @@ sessions_df = sessions_df.sort_values(
 )
 
 # =========================
-# SESSION LABELS
+# UNIQUE SESSION KEY
+# =========================
+
+sessions_df["session_key"] = (
+    sessions_df["device"]
+    + "_"
+    + sessions_df["session_id"].astype(str)
+    + "_"
+    + sessions_df["session_start"]
+        .dt.strftime("%Y%m%d%H%M%S")
+)
+
+# =========================
+# LABELS
 # =========================
 
 sessions_df["label"] = (
     sessions_df["device"]
-    + " | "
-    + sessions_df["session_id"].astype(str)
     + " | "
     + sessions_df["session_date"]
         .dt.strftime("%d/%m %H:%M")
@@ -515,6 +527,23 @@ if len(selected_coros) > 0:
 
     coros_timeline["device"] = "COROS"
 
+    coros_timeline["timestamp"] = pd.to_datetime(
+        coros_timeline["timestamp"],
+        errors="coerce",
+        utc=True
+    ).dt.tz_localize(None)
+
+    coros_timeline["session_key"] = (
+        "COROS_"
+        + coros_timeline["session_id"].astype(str)
+        + "_"
+        + coros_timeline.groupby(
+            "session_id"
+        )["timestamp"]
+        .transform("min")
+        .dt.strftime("%Y%m%d%H%M%S")
+    )
+
 # =========================
 # LOAD MYZONE TIMELINE
 # =========================
@@ -553,6 +582,23 @@ if len(selected_myzone) > 0:
     )
 
     myzone_timeline["device"] = "MYZONE"
+
+    myzone_timeline["timestamp"] = pd.to_datetime(
+        myzone_timeline["timestamp"],
+        errors="coerce",
+        utc=True
+    ).dt.tz_localize(None)
+
+    myzone_timeline["session_key"] = (
+        "MYZONE_"
+        + myzone_timeline["session_id"].astype(str)
+        + "_"
+        + myzone_timeline.groupby(
+            "session_id"
+        )["timestamp"]
+        .transform("min")
+        .dt.strftime("%Y%m%d%H%M%S")
+    )
 
 # =========================
 # LOAD SUUNTO TIMELINE
@@ -595,6 +641,23 @@ if len(selected_suunto) > 0:
 
     suunto_timeline["device"] = "SUUNTO"
 
+    suunto_timeline["timestamp"] = pd.to_datetime(
+        suunto_timeline["timestamp"],
+        errors="coerce",
+        utc=True
+    ).dt.tz_localize(None)
+
+    suunto_timeline["session_key"] = (
+        "SUUNTO_"
+        + suunto_timeline["session_id"].astype(str)
+        + "_"
+        + suunto_timeline.groupby(
+            "session_id"
+        )["timestamp"]
+        .transform("min")
+        .dt.strftime("%Y%m%d%H%M%S")
+    )
+
 conn.close()
 
 # =========================
@@ -610,10 +673,6 @@ timeline_df = pd.concat(
     ignore_index=True
 )
 
-# =========================
-# VALIDATION
-# =========================
-
 if timeline_df.empty:
 
     st.info(
@@ -621,16 +680,6 @@ if timeline_df.empty:
     )
 
     st.stop()
-
-# =========================
-# SAFE TIMESTAMP PARSING
-# =========================
-
-timeline_df["timestamp"] = pd.to_datetime(
-    timeline_df["timestamp"],
-    errors="coerce",
-    utc=True
-).dt.tz_localize(None)
 
 timeline_df = timeline_df.dropna(
     subset=["timestamp"]
@@ -667,18 +716,14 @@ for idx, (_, row) in enumerate(
     selected_sessions_df.iterrows()
 ):
 
+    session_key = row["session_key"]
+
     session = row["session_id"]
 
     device = row["device"]
 
     session_df = timeline_df[
-        (
-            timeline_df["session_id"] == session
-        )
-        &
-        (
-            timeline_df["device"] == device
-        )
+        timeline_df["session_key"] == session_key
     ].copy()
 
     if session_df.empty:
@@ -741,6 +786,8 @@ if (
         selected_sessions_df.iterrows()
     ):
 
+        session_key = row["session_key"]
+
         session = row["session_id"]
 
         device = row["device"]
@@ -753,13 +800,7 @@ if (
             continue
 
         session_df = speed_df[
-            (
-                speed_df["session_id"] == session
-            )
-            &
-            (
-                speed_df["device"] == device
-            )
+            speed_df["session_key"] == session_key
         ].copy()
 
         if session_df.empty:
@@ -826,6 +867,8 @@ if (
         selected_sessions_df.iterrows()
     ):
 
+        session_key = row["session_key"]
+
         session = row["session_id"]
 
         device = row["device"]
@@ -838,13 +881,7 @@ if (
             continue
 
         session_df = distance_df[
-            (
-                distance_df["session_id"] == session
-            )
-            &
-            (
-                distance_df["device"] == device
-            )
+            distance_df["session_key"] == session_key
         ].copy()
 
         if session_df.empty:

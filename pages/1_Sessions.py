@@ -225,6 +225,13 @@ coros_df = pd.read_sql_query(
     params=(session_id,)
 )
 
+# TIMESTAMP COROS
+coros_df["timestamp"] = pd.to_datetime(
+    coros_df["timestamp"],
+    errors="coerce",
+    utc=True
+).dt.tz_localize(None)
+
 
 # =========================
 # MYZONE
@@ -248,6 +255,13 @@ myzone_df = pd.read_sql_query(
     myzone_query,
     conn,
     params=(session_id,)
+)
+
+# TIMESTAMP MYZONE
+myzone_df["timestamp"] = pd.to_datetime(
+    myzone_df["timestamp"],
+    format="%Y-%m-%d %H:%M:%S",
+    errors="coerce"
 )
 
 # MYZONE NO TIENE DISTANCIA NI VELOCIDAD
@@ -281,6 +295,13 @@ suunto_df = pd.read_sql_query(
     params=(session_id,)
 )
 
+# TIMESTAMP SUUNTO
+suunto_df["timestamp"] = pd.to_datetime(
+    suunto_df["timestamp"],
+    errors="coerce",
+    utc=True
+).dt.tz_localize(None)
+
 
 # =========================
 # COMBINE DATA
@@ -296,6 +317,15 @@ hr_df = pd.concat(
 )
 
 conn.close()
+
+
+# =========================
+# REMOVE INVALID TIMESTAMPS
+# =========================
+
+hr_df = hr_df.dropna(
+    subset=["timestamp"]
+)
 
 
 # =========================
@@ -322,21 +352,6 @@ hr_df["player_name"] = (
     " (" +
     hr_df["source"] +
     ")"
-)
-
-
-# =========================
-# TIMESTAMP
-# =========================
-
-hr_df["timestamp"] = pd.to_datetime(
-    hr_df["timestamp"],
-    errors="coerce"
-)
-
-# eliminar timestamps inválidos
-hr_df = hr_df.dropna(
-    subset=["timestamp"]
 )
 
 

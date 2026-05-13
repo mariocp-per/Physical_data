@@ -208,28 +208,28 @@ if len(all_speed) > 0:
 # TOTAL SESSIONS
 # =========================
 
-total_sessions = 0
+all_sessions = []
 
-if not coros_df.empty:
+def count_sessions(df):
 
-    total_sessions += (
-        coros_df["session_id"]
-        .nunique()
+    if df.empty:
+
+        return 0
+
+    timestamps = pd.to_datetime(
+        df["timestamp"],
+        errors="coerce"
     )
 
-if not myzone_df.empty:
+    return timestamps.dt.date.nunique()
 
-    total_sessions += (
-        myzone_df["session_id"]
-        .nunique()
-    )
-
-if not suunto_df.empty:
-
-    total_sessions += (
-        suunto_df["session_id"]
-        .nunique()
-    )
+total_sessions = (
+    count_sessions(coros_df)
+    +
+    count_sessions(myzone_df)
+    +
+    count_sessions(suunto_df)
+)
 
 # =========================
 # METRICS
@@ -364,36 +364,45 @@ st.header("Comparación de sesiones")
 conn = get_connection()
 
 sessions_query = """
-SELECT
-    session_id,
-    MIN(timestamp) as session_start,
-    MAX(timestamp) as session_date,
+SELECT DISTINCT
+    DATE(timestamp) as session_day,
+    MIN(timestamp) OVER (
+        PARTITION BY DATE(timestamp)
+    ) as session_start,
+    MAX(timestamp) OVER (
+        PARTITION BY DATE(timestamp)
+    ) as session_date,
     'COROS' as device
 FROM coros_data
 WHERE player_id = ?
-GROUP BY session_id
 
 UNION ALL
 
-SELECT
-    session_id,
-    MIN(timestamp) as session_start,
-    MAX(timestamp) as session_date,
+SELECT DISTINCT
+    DATE(timestamp) as session_day,
+    MIN(timestamp) OVER (
+        PARTITION BY DATE(timestamp)
+    ) as session_start,
+    MAX(timestamp) OVER (
+        PARTITION BY DATE(timestamp)
+    ) as session_date,
     'MYZONE' as device
 FROM myzone_data
 WHERE player_id = ?
-GROUP BY session_id
 
 UNION ALL
 
-SELECT
-    session_id,
-    MIN(timestamp) as session_start,
-    MAX(timestamp) as session_date,
+SELECT DISTINCT
+    DATE(timestamp) as session_day,
+    MIN(timestamp) OVER (
+        PARTITION BY DATE(timestamp)
+    ) as session_start,
+    MAX(timestamp) OVER (
+        PARTITION BY DATE(timestamp)
+    ) as session_date,
     'SUUNTO' as device
 FROM suunto_data
 WHERE player_id = ?
-GROUP BY session_id
 """
 
 sessions_df = pd.read_sql_query(
@@ -407,7 +416,7 @@ sessions_df = pd.read_sql_query(
 )
 
 # =========================
-# SAFE DATETIME PARSING
+# DATETIME PARSING
 # =========================
 
 sessions_df["session_start"] = pd.to_datetime(
@@ -435,13 +444,11 @@ sessions_df = sessions_df.sort_values(
 )
 
 # =========================
-# UNIQUE SESSION KEY
+# SESSION KEY
 # =========================
 
 sessions_df["session_key"] = (
     sessions_df["device"]
-    + "_"
-    + sessions_df["session_id"].astype(str)
     + "_"
     + sessions_df["session_start"]
         .dt.strftime("%Y%m%d%H%M%S")
@@ -454,7 +461,7 @@ sessions_df["session_key"] = (
 sessions_df["label"] = (
     sessions_df["device"]
     + " | "
-    + sessions_df["session_date"]
+    + sessions_df["session_start"]
         .dt.strftime("%d/%m %H:%M")
 )
 
@@ -487,43 +494,14 @@ if selected_sessions_df.empty:
     st.stop()
 
 # =========================
-# LOAD COROS TIMELINE
+# LOAD COROS
 # =========================
 
 coros_timeline = pd.DataFrame()
 
-selected_coros = selected_sessions_df[
-    selected_sessions_df["device"] == "COROS"
-]["session_id"].tolist()
+if not coros_df.empty:
 
-if len(selected_coros) > 0:
-
-    coros_query = """
-    SELECT
-        timestamp,
-        session_id,
-        heart_rate,
-        speed,
-        distance
-    FROM coros_data
-    WHERE player_id = ?
-    AND session_id IN ({})
-    ORDER BY timestamp
-    """.format(
-        ",".join(
-            ["?"] * len(selected_coros)
-        )
-    )
-
-    coros_params = [
-        player_id
-    ] + selected_coros
-
-    coros_timeline = pd.read_sql_query(
-        coros_query,
-        conn,
-        params=coros_params
-    )
+    coros_timeline = coros_df.copy()
 
     coros_timeline["device"] = "COROS"
 
@@ -534,52 +512,24 @@ if len(selected_coros) > 0:
     ).dt.tz_localize(None)
 
     coros_timeline["session_key"] = (
-        "COROS_"
-        + coros_timeline["session_id"].astype(str)
+        coros_timeline["device"]
         + "_"
         + coros_timeline.groupby(
-            "session_id"
+            coros_timeline["timestamp"].dt.date
         )["timestamp"]
         .transform("min")
         .dt.strftime("%Y%m%d%H%M%S")
     )
 
 # =========================
-# LOAD MYZONE TIMELINE
+# LOAD MYZONE
 # =========================
 
 myzone_timeline = pd.DataFrame()
 
-selected_myzone = selected_sessions_df[
-    selected_sessions_df["device"] == "MYZONE"
-]["session_id"].tolist()
+if not myzone_df.empty:
 
-if len(selected_myzone) > 0:
-
-    myzone_query = """
-    SELECT
-        timestamp,
-        session_id,
-        heart_rate
-    FROM myzone_data
-    WHERE player_id = ?
-    AND session_id IN ({})
-    ORDER BY timestamp
-    """.format(
-        ",".join(
-            ["?"] * len(selected_myzone)
-        )
-    )
-
-    myzone_params = [
-        player_id
-    ] + selected_myzone
-
-    myzone_timeline = pd.read_sql_query(
-        myzone_query,
-        conn,
-        params=myzone_params
-    )
+    myzone_timeline = myzone_df.copy()
 
     myzone_timeline["device"] = "MYZONE"
 
@@ -590,54 +540,24 @@ if len(selected_myzone) > 0:
     ).dt.tz_localize(None)
 
     myzone_timeline["session_key"] = (
-        "MYZONE_"
-        + myzone_timeline["session_id"].astype(str)
+        myzone_timeline["device"]
         + "_"
         + myzone_timeline.groupby(
-            "session_id"
+            myzone_timeline["timestamp"].dt.date
         )["timestamp"]
         .transform("min")
         .dt.strftime("%Y%m%d%H%M%S")
     )
 
 # =========================
-# LOAD SUUNTO TIMELINE
+# LOAD SUUNTO
 # =========================
 
 suunto_timeline = pd.DataFrame()
 
-selected_suunto = selected_sessions_df[
-    selected_sessions_df["device"] == "SUUNTO"
-]["session_id"].tolist()
+if not suunto_df.empty:
 
-if len(selected_suunto) > 0:
-
-    suunto_query = """
-    SELECT
-        timestamp,
-        session_id,
-        heart_rate,
-        speed,
-        distance
-    FROM suunto_data
-    WHERE player_id = ?
-    AND session_id IN ({})
-    ORDER BY timestamp
-    """.format(
-        ",".join(
-            ["?"] * len(selected_suunto)
-        )
-    )
-
-    suunto_params = [
-        player_id
-    ] + selected_suunto
-
-    suunto_timeline = pd.read_sql_query(
-        suunto_query,
-        conn,
-        params=suunto_params
-    )
+    suunto_timeline = suunto_df.copy()
 
     suunto_timeline["device"] = "SUUNTO"
 
@@ -648,11 +568,10 @@ if len(selected_suunto) > 0:
     ).dt.tz_localize(None)
 
     suunto_timeline["session_key"] = (
-        "SUUNTO_"
-        + suunto_timeline["session_id"].astype(str)
+        suunto_timeline["device"]
         + "_"
         + suunto_timeline.groupby(
-            "session_id"
+            suunto_timeline["timestamp"].dt.date
         )["timestamp"]
         .transform("min")
         .dt.strftime("%Y%m%d%H%M%S")
@@ -661,7 +580,7 @@ if len(selected_suunto) > 0:
 conn.close()
 
 # =========================
-# COMBINE ALL DATA
+# COMBINE
 # =========================
 
 timeline_df = pd.concat(
@@ -673,6 +592,10 @@ timeline_df = pd.concat(
     ignore_index=True
 )
 
+timeline_df = timeline_df.dropna(
+    subset=["timestamp"]
+)
+
 if timeline_df.empty:
 
     st.info(
@@ -681,9 +604,15 @@ if timeline_df.empty:
 
     st.stop()
 
-timeline_df = timeline_df.dropna(
-    subset=["timestamp"]
-)
+# =========================
+# FILTER SELECTED SESSIONS
+# =========================
+
+timeline_df = timeline_df[
+    timeline_df["session_key"].isin(
+        selected_sessions_df["session_key"]
+    )
+]
 
 # =========================
 # COLORS
@@ -718,8 +647,6 @@ for idx, (_, row) in enumerate(
 
     session_key = row["session_key"]
 
-    session = row["session_id"]
-
     device = row["device"]
 
     session_df = timeline_df[
@@ -745,7 +672,7 @@ for idx, (_, row) in enumerate(
     ax_hr.plot(
         session_df["minutes"],
         session_df["heart_rate"],
-        label=f"{device} - {session}",
+        label=row["label"],
         linewidth=2,
         color=session_colors[
             idx % len(session_colors)
@@ -788,17 +715,6 @@ if (
 
         session_key = row["session_key"]
 
-        session = row["session_id"]
-
-        device = row["device"]
-
-        if device not in [
-            "COROS",
-            "SUUNTO"
-        ]:
-
-            continue
-
         session_df = speed_df[
             speed_df["session_key"] == session_key
         ].copy()
@@ -826,7 +742,7 @@ if (
         ax_speed.plot(
             session_df["minutes"],
             session_df["speed_kmh"],
-            label=f"{device} - {session}",
+            label=row["label"],
             linewidth=2,
             color=session_colors[
                 idx % len(session_colors)
@@ -869,17 +785,6 @@ if (
 
         session_key = row["session_key"]
 
-        session = row["session_id"]
-
-        device = row["device"]
-
-        if device not in [
-            "COROS",
-            "SUUNTO"
-        ]:
-
-            continue
-
         session_df = distance_df[
             distance_df["session_key"] == session_key
         ].copy()
@@ -907,7 +812,7 @@ if (
         ax_dist.plot(
             session_df["minutes"],
             session_df["distance_km"],
-            label=f"{device} - {session}",
+            label=row["label"],
             linewidth=2,
             color=session_colors[
                 idx % len(session_colors)

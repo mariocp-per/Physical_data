@@ -84,7 +84,7 @@ c4.metric(
 )
 
 # =========================
-# LOAD ALL DATA
+# LOAD DATA
 # =========================
 
 conn = get_connection()
@@ -122,19 +122,13 @@ suunto_df = pd.read_sql_query(
 conn.close()
 
 # =========================
-# HISTORICAL DATA
+# HISTORICAL METRICS
 # =========================
-
-historical_hr_max = None
-historical_hr_mean = None
-historical_speed_max = None
 
 all_hr = []
 all_speed = []
 
-# =========================
 # COROS
-# =========================
 
 if not coros_df.empty:
 
@@ -155,9 +149,7 @@ if not coros_df.empty:
             ).tolist()
         )
 
-# =========================
 # MYZONE
-# =========================
 
 if not myzone_df.empty:
 
@@ -169,9 +161,7 @@ if not myzone_df.empty:
             .tolist()
         )
 
-# =========================
 # SUUNTO
-# =========================
 
 if not suunto_df.empty:
 
@@ -192,9 +182,9 @@ if not suunto_df.empty:
             ).tolist()
         )
 
-# =========================
-# GLOBAL METRICS
-# =========================
+historical_hr_max = None
+historical_hr_mean = None
+historical_speed_max = None
 
 if len(all_hr) > 0:
 
@@ -218,21 +208,33 @@ if len(all_speed) > 0:
 # TOTAL SESSIONS
 # =========================
 
-total_sessions = len(
-    pd.concat([
-        coros_df[["session_id"]]
-        if not coros_df.empty
-        else pd.DataFrame(),
+all_sessions = []
 
-        myzone_df[["session_id"]]
-        if not myzone_df.empty
-        else pd.DataFrame(),
+if not coros_df.empty:
 
-        suunto_df[["session_id"]]
-        if not suunto_df.empty
-        else pd.DataFrame()
-    ])
-)
+    all_sessions.extend(
+        coros_df["session_id"]
+        .dropna()
+        .tolist()
+    )
+
+if not myzone_df.empty:
+
+    all_sessions.extend(
+        myzone_df["session_id"]
+        .dropna()
+        .tolist()
+    )
+
+if not suunto_df.empty:
+
+    all_sessions.extend(
+        suunto_df["session_id"]
+        .dropna()
+        .tolist()
+    )
+
+total_sessions = len(all_sessions)
 
 # =========================
 # METRICS
@@ -266,6 +268,12 @@ if historical_hr_max is not None:
     m4.metric(
         "Sesiones",
         total_sessions
+    )
+
+else:
+
+    st.info(
+        "No hay datos monitorizados"
     )
 
 # =========================
@@ -394,8 +402,6 @@ SELECT
 FROM suunto_data
 WHERE player_id = ?
 GROUP BY session_id
-
-ORDER BY session_date DESC
 """
 
 sessions_df = pd.read_sql_query(
@@ -408,15 +414,41 @@ sessions_df = pd.read_sql_query(
     )
 )
 
+# =========================
+# SAFE DATETIME PARSING
+# =========================
+
+sessions_df["session_date"] = pd.to_datetime(
+    sessions_df["session_date"],
+    errors="coerce",
+    utc=True
+).dt.tz_localize(None)
+
+sessions_df = sessions_df.dropna(
+    subset=["session_date"]
+)
+
+sessions_df = sessions_df.sort_values(
+    "session_date",
+    ascending=False
+)
+
+# =========================
+# SESSION LABELS
+# =========================
+
 sessions_df["label"] = (
     sessions_df["device"]
     + " | "
     + sessions_df["session_id"].astype(str)
     + " | "
-    + pd.to_datetime(
-        sessions_df["session_date"]
-    ).dt.strftime("%d/%m %H:%M")
+    + sessions_df["session_date"]
+        .dt.strftime("%d/%m %H:%M")
 )
+
+# =========================
+# DEFAULT LAST 2
+# =========================
 
 default_sessions = sessions_df[
     "label"
@@ -436,10 +468,14 @@ selected_sessions_df = sessions_df[
 
 if selected_sessions_df.empty:
 
+    st.info(
+        "Selecciona al menos una sesión"
+    )
+
     st.stop()
 
 # =========================
-# LOAD COROS
+# LOAD COROS TIMELINE
 # =========================
 
 coros_timeline = pd.DataFrame()
@@ -480,7 +516,7 @@ if len(selected_coros) > 0:
     coros_timeline["device"] = "COROS"
 
 # =========================
-# LOAD MYZONE
+# LOAD MYZONE TIMELINE
 # =========================
 
 myzone_timeline = pd.DataFrame()
@@ -519,7 +555,7 @@ if len(selected_myzone) > 0:
     myzone_timeline["device"] = "MYZONE"
 
 # =========================
-# LOAD SUUNTO
+# LOAD SUUNTO TIMELINE
 # =========================
 
 suunto_timeline = pd.DataFrame()
@@ -562,7 +598,7 @@ if len(selected_suunto) > 0:
 conn.close()
 
 # =========================
-# COMBINE
+# COMBINE ALL DATA
 # =========================
 
 timeline_df = pd.concat(
@@ -574,19 +610,30 @@ timeline_df = pd.concat(
     ignore_index=True
 )
 
+# =========================
+# VALIDATION
+# =========================
+
 if timeline_df.empty:
 
     st.info(
-        "No hay datos"
+        "No hay datos disponibles"
     )
 
     st.stop()
 
-timeline_df["timestamp"] = (
-    pd.to_datetime(
-        timeline_df["timestamp"]
-    )
-    .dt.tz_localize(None)
+# =========================
+# SAFE TIMESTAMP PARSING
+# =========================
+
+timeline_df["timestamp"] = pd.to_datetime(
+    timeline_df["timestamp"],
+    errors="coerce",
+    utc=True
+).dt.tz_localize(None)
+
+timeline_df = timeline_df.dropna(
+    subset=["timestamp"]
 )
 
 # =========================
@@ -671,14 +718,10 @@ st.pyplot(fig_hr)
 # SPEED GRAPH
 # =========================
 
-speed_devices = [
-    "COROS",
-    "SUUNTO"
-]
-
 speed_df = timeline_df[
-    timeline_df["device"]
-    .isin(speed_devices)
+    timeline_df["device"].isin(
+        ["COROS", "SUUNTO"]
+    )
 ].copy()
 
 if (
@@ -702,7 +745,10 @@ if (
 
         device = row["device"]
 
-        if device not in speed_devices:
+        if device not in [
+            "COROS",
+            "SUUNTO"
+        ]:
 
             continue
 
@@ -757,14 +803,10 @@ if (
 # DISTANCE GRAPH
 # =========================
 
-distance_devices = [
-    "COROS",
-    "SUUNTO"
-]
-
 distance_df = timeline_df[
-    timeline_df["device"]
-    .isin(distance_devices)
+    timeline_df["device"].isin(
+        ["COROS", "SUUNTO"]
+    )
 ].copy()
 
 if (
@@ -788,7 +830,10 @@ if (
 
         device = row["device"]
 
-        if device not in distance_devices:
+        if device not in [
+            "COROS",
+            "SUUNTO"
+        ]:
 
             continue
 

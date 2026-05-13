@@ -358,13 +358,16 @@ hr_df["player_name"] = (
 # TIMESTAMP
 # =========================
 
-hr_df["timestamp"] = (
-    pd.to_datetime(
-        hr_df["timestamp"]
-    )
-    .dt.tz_localize(None)
-)
+hr_df["timestamp"] = pd.to_datetime(
+    hr_df["timestamp"],
+    errors="coerce",
+    utc=True
+).dt.tz_localize(None)
 
+# eliminar timestamps inválidos
+hr_df = hr_df.dropna(
+    subset=["timestamp"]
+)
 
 # =========================
 # PLAYER SELECTOR

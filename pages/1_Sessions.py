@@ -469,9 +469,14 @@ for player in selected_players:
         player_df["speed"].notna().any()
     ):
 
+        # convertir m/s -> km/h
+        speed_kmh = (
+            player_df["speed"] * 3.6
+        )
+
         ax_speed.plot(
             player_df["minutes"],
-            player_df["speed"],
+            speed_kmh,
             label=player,
             linewidth=2
         )
@@ -525,7 +530,7 @@ ax_speed.set_xlabel(
 )
 
 ax_speed.set_ylabel(
-    "Velocidad"
+    "Velocidad (km/h)"
 )
 
 ax_speed.set_title(

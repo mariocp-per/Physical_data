@@ -489,18 +489,50 @@ sessions_df["session_date"] = (
 )
 
 # =========================
+# CLEAN LABEL FIELDS
+# =========================
+
+sessions_df["device"] = (
+    sessions_df["device"]
+    .fillna("UNKNOWN")
+    .astype(str)
+)
+
+sessions_df["session_id"] = (
+    sessions_df["session_id"]
+    .fillna(-1)
+    .astype(int)
+)
+
+sessions_df["session_date"] = (
+    sessions_df["session_date"]
+    .fillna("Sin fecha")
+    .astype(str)
+)
+
+# =========================
 # LABELS
 # =========================
 
 sessions_df["label"] = (
     sessions_df["device"]
     + " | Sesión "
-    + sessions_df["session_id"]
-        .astype(str)
+    + sessions_df["session_id"].astype(str)
     + " | "
     + sessions_df["session_date"]
 )
 
+# =========================
+# REMOVE INVALID LABELS
+# =========================
+
+sessions_df = sessions_df[
+    sessions_df["label"].notna()
+]
+
+sessions_df = sessions_df[
+    sessions_df["session_id"] != -1
+]
 # =========================
 # SESSION OPTIONS
 # =========================

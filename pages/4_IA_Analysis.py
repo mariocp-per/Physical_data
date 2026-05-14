@@ -83,41 +83,79 @@ def get_players_by_session(session_id):
 # IA FUNCTIONS
 # =========================================================
 
-def calcular_intensidad(metrics):
+def calcular_intensidad(
+    metrics,
+    hr_profile
+):
 
     score = 0
 
-    # FC
-    if metrics["avg_hr"] >= 170:
-        score += 40
+    # =====================================================
+    # FC RELATIVA
+    # =====================================================
 
-    elif metrics["avg_hr"] >= 155:
+    if hr_profile is not None:
+
+        hr_max = hr_profile["hr_max"]
+
+        hr_ratio = (
+            metrics["avg_hr"] / hr_max
+        )
+
+        # Z5
+        if hr_ratio >= 0.90:
+
+            score += 40
+
+        # Z4
+        elif hr_ratio >= 0.80:
+
+            score += 30
+
+        # Z3
+        elif hr_ratio >= 0.70:
+
+            score += 20
+
+        # Z2
+        else:
+
+            score += 10
+
+    else:
+
+        score += 20
+
+    # =====================================================
+    # DISTANCIA
+    # =====================================================
+
+    if metrics["total_distance"] >= 3500:
+
         score += 30
 
-    elif metrics["avg_hr"] >= 140:
+    elif metrics["total_distance"] >= 2250:
+
         score += 20
 
     else:
+
         score += 10
 
-    # Distancia
-    if metrics["total_distance"] >= 7000:
+    # =====================================================
+    # SPRINTS
+    # =====================================================
+
+    if metrics["sprint_count"] >= 25:
+
         score += 30
 
-    elif metrics["total_distance"] >= 5000:
+    elif metrics["sprint_count"] >= 15:
+
         score += 20
 
     else:
-        score += 10
 
-    # Velocidad
-    if metrics["max_speed"] >= 24:
-        score += 30
-
-    elif metrics["max_speed"] >= 20:
-        score += 20
-
-    else:
         score += 10
 
     return min(score, 100)
@@ -137,9 +175,13 @@ def clasificar_intensidad(score):
     return "Baja"
 
 
-def detectar_fatiga(metrics, hr_profile):
+def detectar_fatiga(
+    metrics,
+    hr_profile
+):
 
     if hr_profile is None:
+
         return "Sin datos"
 
     hr_max = hr_profile["hr_max"]
@@ -148,13 +190,26 @@ def detectar_fatiga(metrics, hr_profile):
         metrics["avg_hr"] / hr_max
     )
 
+    # =====================================================
+    # FATIGA ALTA
+    # =====================================================
+
     if (
         hr_ratio > 0.85
-        and metrics["max_speed"] < 18
+        and metrics["sprint_count"] > 25
     ):
+
         return "Alta"
 
-    elif hr_ratio > 0.75:
+    # =====================================================
+    # FATIGA MODERADA
+    # =====================================================
+
+    elif (
+        hr_ratio > 0.75
+        or metrics["sprint_count"] > 15
+    ):
+
         return "Moderada"
 
     return "Baja"
@@ -276,27 +331,72 @@ def generar_recomendacion(
 """
 
 
-def generar_alertas(metrics):
+def generar_alertas(
+    metrics,
+    hr_profile
+):
 
     alertas = []
 
-    if metrics["max_hr"] > 190:
+    # =====================================================
+    # FC RELATIVA
+    # =====================================================
 
-        alertas.append(
-            "⚠️ FC máxima muy elevada"
+    if hr_profile is not None:
+
+        hr_max = hr_profile["hr_max"]
+
+        hr_ratio_max = (
+            metrics["max_hr"] / hr_max
         )
 
-    if metrics["max_speed"] > 28:
-
-        alertas.append(
-            "⚠️ Pico de velocidad muy alto"
+        hr_ratio_avg = (
+            metrics["avg_hr"] / hr_max
         )
+
+        # FC máxima extrema
+        if hr_ratio_max >= 0.98:
+
+            alertas.append(
+                "⚠️ FC máxima cercana al límite individual"
+            )
+
+        # FC media muy alta
+        if hr_ratio_avg >= 0.90:
+
+            alertas.append(
+                "⚠️ Exposición cardiovascular muy elevada"
+            )
+
+    # =====================================================
+    # SPRINTS
+    # =====================================================
 
     if metrics["sprint_count"] > 30:
 
         alertas.append(
             "⚠️ Volumen elevado de sprints"
         )
+
+    elif metrics["sprint_count"] > 20:
+
+        alertas.append(
+            "⚠️ Alta exposición a esfuerzos explosivos"
+        )
+
+    # =====================================================
+    # DISTANCIA
+    # =====================================================
+
+    if metrics["total_distance"] > 4500:
+
+        alertas.append(
+            "⚠️ Distancia total elevada"
+        )
+
+    # =====================================================
+    # PLAYER LOAD
+    # =====================================================
 
     if metrics["player_load"] > 500:
 
@@ -397,7 +497,8 @@ hr_profile = get_player_hr_profile(
 # =========================================================
 
 intensity_score = calcular_intensidad(
-    metrics
+    metrics,
+    hr_profile
 )
 
 intensidad = clasificar_intensidad(
@@ -426,7 +527,8 @@ recomendacion = generar_recomendacion(
 )
 
 alertas = generar_alertas(
-    metrics
+    metrics,
+    hr_profile
 )
 
 # =========================================================

@@ -501,24 +501,35 @@ sessions_df["label"] = (
     + sessions_df["session_date"]
 )
 
+# =========================
+# SESSION OPTIONS
+# =========================
+
+session_options = {
+    row["label"]: {
+        "session_id": row["session_id"],
+        "device": row["device"]
+    }
+    for _, row in sessions_df.iterrows()
+}
+
 selected_label = st.selectbox(
     "Seleccionar sesión",
-    sessions_df["label"].tolist(),
+    list(session_options.keys()),
     index=0
 )
 
-selected_session = sessions_df[
-    sessions_df["label"]
-    == selected_label
-].iloc[0]
-
-selected_session_id = selected_session[
-    "session_id"
+selected_session = session_options[
+    selected_label
 ]
 
-selected_device = selected_session[
-    "device"
-]
+selected_session_id = (
+    selected_session["session_id"]
+)
+
+selected_device = (
+    selected_session["device"]
+)
 
 # =========================
 # LOAD SESSION DATA
@@ -768,7 +779,7 @@ if (
             (heatmap_df["y"] <= 15)
         ].copy()
 
-        # REMOVE GPS OUTLIERS
+        # REMOVE OUTLIERS
 
         x_min = heatmap_df["x"].quantile(0.009)
         x_max = heatmap_df["x"].quantile(0.991)

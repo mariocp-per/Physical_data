@@ -5,6 +5,10 @@ import sqlite3
 import pandas as pd
 import numpy as np
 
+from metrics.session_metrics import (
+    build_player_session_metrics
+)
+
 # =========================================================
 # CONFIG
 # =========================================================
@@ -49,7 +53,7 @@ def get_player_sessions(player_id):
     conn = sqlite3.connect(DB_PATH)
 
     query = f"""
-    SELECT
+    SELECT DISTINCT
         ts.id AS session_id,
         ts.session_date,
         ts.location,
@@ -72,20 +76,27 @@ def get_player_sessions(player_id):
     return df
 
 # =========================================================
-# IMPORT METRICS
+# SAFE METRICS
 # =========================================================
 
-from metrics.session_metrics import (
-    build_player_session_metrics
-)
+def safe_metric(
+    metrics,
+    key,
+    default=0
+):
+
+    value = metrics.get(key, default)
+
+    if value is None:
+        return default
+
+    return value
 
 # =========================================================
 # WORKLOAD FUNCTIONS
 # =========================================================
 
-def build_workload_dataframe(
-    player_id
-):
+def build_workload_dataframe(player_id):
 
     sessions_df = get_player_sessions(
         player_id
@@ -106,16 +117,74 @@ def build_workload_dataframe(
             continue
 
         # =================================================
+        # SAFE METRICS
+        # =================================================
+
+        player_load = safe_metric(
+            metrics,
+            "player_load"
+        )
+
+        sprint_count = safe_metric(
+            metrics,
+            "sprint_count"
+        )
+
+        hsr_distance = safe_metric(
+            metrics,
+            "hsr_distance"
+        )
+
+        total_distance = safe_metric(
+            metrics,
+            "total_distance"
+        )
+
+        sprint_distance = safe_metric(
+            metrics,
+            "sprint_distance"
+        )
+
+        avg_hr = safe_metric(
+            metrics,
+            "avg_hr"
+        )
+
+        max_hr = safe_metric(
+            metrics,
+            "max_hr"
+        )
+
+        max_speed = safe_metric(
+            metrics,
+            "max_speed"
+        )
+
+        accelerations = safe_metric(
+            metrics,
+            "accelerations"
+        )
+
+        decelerations = safe_metric(
+            metrics,
+            "decelerations"
+        )
+
+        # =================================================
         # TRAINING LOAD
         # =================================================
 
         training_load = (
-            metrics["player_load"] * 0.6
+            player_load * 0.6
             +
-            metrics["sprint_count"] * 2
+            sprint_count * 2
             +
-            metrics["hsr_distance"] * 0.05
+            hsr_distance * 0.05
         )
+
+        # =================================================
+        # APPEND
+        # =================================================
 
         data.append({
 
@@ -126,28 +195,37 @@ def build_workload_dataframe(
                 row["session_date"],
 
             "player_load":
-                metrics["player_load"],
-
-            "total_distance":
-                metrics["total_distance"],
-
-            "hsr_distance":
-                metrics["hsr_distance"],
-
-            "sprint_distance":
-                metrics["sprint_distance"],
-
-            "sprint_count":
-                metrics["sprint_count"],
-
-            "avg_hr":
-                metrics["avg_hr"],
-
-            "max_hr":
-                metrics["max_hr"],
+                round(player_load, 1),
 
             "training_load":
-                round(training_load, 1)
+                round(training_load, 1),
+
+            "total_distance":
+                round(total_distance, 1),
+
+            "hsr_distance":
+                round(hsr_distance, 1),
+
+            "sprint_distance":
+                round(sprint_distance, 1),
+
+            "sprint_count":
+                sprint_count,
+
+            "avg_hr":
+                round(avg_hr, 1),
+
+            "max_hr":
+                round(max_hr, 1),
+
+            "max_speed":
+                round(max_speed, 1),
+
+            "accelerations":
+                accelerations,
+
+            "decelerations":
+                decelerations
         })
 
     df = pd.DataFrame(data)
@@ -163,24 +241,35 @@ def build_workload_dataframe(
         df["date"]
     )
 
-    df = df.sort_values("date")
+    df = df.sort_values(
+        "date"
+    )
 
     # =====================================================
     # ACWR
     # =====================================================
 
+    # Acute Load
     df["acute_load"] = (
         df["training_load"]
-        .rolling(7, min_periods=1)
+        .rolling(
+            window=7,
+            min_periods=1
+        )
         .mean()
     )
 
+    # Chronic Load
     df["chronic_load"] = (
         df["training_load"]
-        .rolling(28, min_periods=1)
+        .rolling(
+            window=28,
+            min_periods=1
+        )
         .mean()
     )
 
+    # ACWR
     df["acwr"] = (
         df["acute_load"]
         /
@@ -190,6 +279,7 @@ def build_workload_dataframe(
     df["acwr"] = (
         df["acwr"]
         .replace(np.inf, np.nan)
+        .fillna(0)
     )
 
     return df
@@ -200,11 +290,11 @@ def build_workload_dataframe(
 
 def classify_acwr(acwr):
 
-    if pd.isna(acwr):
+    if acwr == 0:
         return "Sin datos"
 
     if acwr < 0.8:
-        return "Baja carga"
+        return "Carga baja"
 
     elif acwr < 1.3:
         return "Óptima"
@@ -215,9 +305,7 @@ def classify_acwr(acwr):
     return "Alto riesgo"
 
 
-def detect_workload_alerts(
-    latest_row
-):
+def detect_workload_alerts(latest_row):
 
     alerts = []
 
@@ -244,7 +332,7 @@ def detect_workload_alerts(
     if latest_row["player_load"] > 500:
 
         alerts.append(
-            "⚠️ Player load elevado"
+            "⚠️ Player Load elevado"
         )
 
     # =====================================================
@@ -264,7 +352,7 @@ def detect_workload_alerts(
     if latest_row["hsr_distance"] > 700:
 
         alerts.append(
-            "⚠️ HSR elevada"
+            "⚠️ HSR distance elevada"
         )
 
     return alerts
@@ -278,19 +366,20 @@ def generate_summary(
     text = f"""
 ### Resumen acumulado
 
-La jugadora presenta actualmente un estado
-de carga **{acwr_label.lower()}**.
+La jugadora presenta actualmente
+un estado de carga **{acwr_label.lower()}**.
 
 - ACWR actual: **{round(latest_row['acwr'], 2)}**
-- Carga aguda (7 sesiones): **{round(latest_row['acute_load'], 1)}**
-- Carga crónica (28 sesiones): **{round(latest_row['chronic_load'], 1)}**
+- Carga aguda: **{round(latest_row['acute_load'], 1)}**
+- Carga crónica: **{round(latest_row['chronic_load'], 1)}**
 - Player Load último registro: **{latest_row['player_load']}**
-- Distancia HSR: **{latest_row['hsr_distance']} m**
+- Distancia total: **{latest_row['total_distance']} m**
+- HSR Distance: **{latest_row['hsr_distance']} m**
 - Número de sprints: **{latest_row['sprint_count']}**
 """
 
     # =====================================================
-    # ACWR
+    # INTERPRETATION
     # =====================================================
 
     if latest_row["acwr"] > 1.5:
@@ -299,6 +388,9 @@ de carga **{acwr_label.lower()}**.
 
 Existe un incremento rápido de carga
 respecto al baseline acumulado.
+
+Se recomienda controlar exposición
+a alta intensidad.
 """
 
     elif latest_row["acwr"] < 0.8:
@@ -306,7 +398,7 @@ respecto al baseline acumulado.
         text += """
 
 Se detecta una posible reducción
-de estímulo de entrenamiento.
+del estímulo acumulado.
 """
 
     else:
@@ -327,7 +419,7 @@ st.title("📈 Carga Acumulada")
 
 st.markdown("""
 Monitorización longitudinal
-de carga y ACWR.
+de carga física y ACWR.
 """)
 
 # =========================================================
@@ -335,6 +427,14 @@ de carga y ACWR.
 # =========================================================
 
 players_df = get_players()
+
+if players_df.empty:
+
+    st.warning(
+        "No existen jugadoras"
+    )
+
+    st.stop()
 
 selected_player = st.selectbox(
     "Seleccionar jugadora",
@@ -347,7 +447,7 @@ selected_player = st.selectbox(
 )
 
 # =========================================================
-# BUILD DATA
+# BUILD WORKLOAD
 # =========================================================
 
 workload_df = build_workload_dataframe(
@@ -357,13 +457,13 @@ workload_df = build_workload_dataframe(
 if workload_df.empty:
 
     st.warning(
-        "No existen sesiones suficientes"
+        "No existen métricas suficientes"
     )
 
     st.stop()
 
 # =========================================================
-# LATEST
+# LATEST ROW
 # =========================================================
 
 latest_row = workload_df.iloc[-1]
@@ -382,7 +482,7 @@ summary = generate_summary(
 )
 
 # =========================================================
-# TOP KPIs
+# KPIs
 # =========================================================
 
 c1, c2, c3, c4 = st.columns(4)
@@ -428,12 +528,12 @@ st.subheader("🧠 Interpretación")
 st.markdown(summary)
 
 # =========================================================
-# TRAINING LOAD
+# LOAD EVOLUTION
 # =========================================================
 
 st.subheader("📈 Evolución carga")
 
-chart_df = workload_df[
+load_chart = workload_df[
     [
         "date",
         "training_load",
@@ -442,14 +542,14 @@ chart_df = workload_df[
     ]
 ]
 
-chart_df = chart_df.set_index(
+load_chart = load_chart.set_index(
     "date"
 )
 
-st.line_chart(chart_df)
+st.line_chart(load_chart)
 
 # =========================================================
-# ACWR
+# ACWR EVOLUTION
 # =========================================================
 
 st.subheader("⚖️ Evolución ACWR")
@@ -471,7 +571,7 @@ st.line_chart(acwr_chart)
 # DISTANCE
 # =========================================================
 
-st.subheader("🏃 Distancia total")
+st.subheader("🏃 Distancia Total")
 
 distance_chart = workload_df[
     [
@@ -509,7 +609,7 @@ st.line_chart(hsr_chart)
 # SPRINTS
 # =========================================================
 
-st.subheader("💨 Sprints")
+st.subheader("💨 Sprint Count")
 
 sprint_chart = workload_df[
     [
@@ -543,15 +643,17 @@ with st.expander(
 
 st.divider()
 
+st.subheader("🚀 Evolución futura")
+
 st.markdown("""
-### 🚀 Próximas evoluciones
+Próximos módulos:
 
 - Readiness score
-- Fatiga acumulada
 - Wellness
+- Fatiga acumulada
 - Riesgo lesión
-- Predicción rendimiento
 - Comparativa por posición
 - Tendencias semanales
 - Informes automáticos IA
+- Predicción rendimiento
 """)

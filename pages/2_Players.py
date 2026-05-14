@@ -439,10 +439,6 @@ sessions_df = pd.read_sql_query(
     conn
 )
 
-# =========================
-# VALIDATION
-# =========================
-
 if sessions_df.empty:
 
     st.info(
@@ -454,13 +450,17 @@ if sessions_df.empty:
     st.stop()
 
 # =========================
-# CLEAN DATES
+# DATES
 # =========================
 
 sessions_df["session_date"] = (
     sessions_df["session_date"]
     .astype(str)
-    .str.replace("+00:00", "", regex=False)
+    .str.replace(
+        "+00:00",
+        "",
+        regex=False
+    )
 )
 
 sessions_df["session_date"] = pd.to_datetime(
@@ -468,60 +468,13 @@ sessions_df["session_date"] = pd.to_datetime(
     errors="coerce"
 )
 
-sessions_df["label"] = (
-    sessions_df["device"]
-    + " | Sesión "
-    + sessions_df["session_id"].astype(str)
-    + " | "
-    + sessions_df["session_date"]
-        .dt.strftime("%d/%m/%Y %H:%M")
-)   
-valid_dates = sessions_df[
+sessions_df = sessions_df[
     sessions_df["session_date"].notna()
 ].copy()
 
-invalid_dates = sessions_df[
-    sessions_df["session_date"].isna()
-].copy()
-
-valid_dates = valid_dates.sort_values(
+sessions_df = sessions_df.sort_values(
     "session_date",
     ascending=False
-)
-
-sessions_df = pd.concat(
-    [
-        valid_dates,
-        invalid_dates
-    ]
-)
-
-sessions_df["session_date"] = (
-    sessions_df["session_date"]
-    .astype(str)
-    .replace("NaT", "Sin fecha")
-)
-
-# =========================
-# CLEAN LABEL FIELDS
-# =========================
-
-sessions_df["device"] = (
-    sessions_df["device"]
-    .fillna("UNKNOWN")
-    .astype(str)
-)
-
-sessions_df["session_id"] = (
-    sessions_df["session_id"]
-    .fillna(-1)
-    .astype(int)
-)
-
-sessions_df["session_date"] = (
-    sessions_df["session_date"]
-    .fillna("Sin fecha")
-    .astype(str)
 )
 
 # =========================
@@ -531,22 +484,13 @@ sessions_df["session_date"] = (
 sessions_df["label"] = (
     sessions_df["device"]
     + " | Sesión "
-    + sessions_df["session_id"].astype(str)
+    + sessions_df["session_id"]
+        .astype(str)
     + " | "
     + sessions_df["session_date"]
+        .dt.strftime("%d/%m/%Y %H:%M")
 )
 
-# =========================
-# REMOVE INVALID LABELS
-# =========================
-
-sessions_df = sessions_df[
-    sessions_df["label"].notna()
-]
-
-sessions_df = sessions_df[
-    sessions_df["session_id"] != -1
-]
 # =========================
 # SESSION OPTIONS
 # =========================
@@ -646,12 +590,18 @@ if session_df.empty:
     st.stop()
 
 # =========================
-# CLEAN TIMESTAMP
+# HR TIMELINE
 # =========================
 
-session_df["timestamp"] = pd.to_datetime(
-    session_df["timestamp"],
-    errors="coerce"
+st.header(
+    "Frecuencia cardíaca"
+)
+
+session_df["timestamp"] = (
+    pd.to_datetime(
+        session_df["timestamp"],
+        errors="coerce"
+    )
 )
 
 session_df = session_df.dropna(
@@ -662,9 +612,16 @@ session_df = session_df.sort_values(
     "timestamp"
 )
 
-# =========================
-# TIME AXIS
-# =========================
+try:
+
+    session_df["timestamp"] = (
+        session_df["timestamp"]
+        .dt.tz_localize(None)
+    )
+
+except:
+
+    pass
 
 start_time = session_df[
     "timestamp"
@@ -676,34 +633,250 @@ session_df["minutes"] = (
 ).dt.total_seconds() / 60
 
 # =========================
-# HR GRAPH
+# HISTORICAL ZONES
 # =========================
 
-st.subheader(
-    "Frecuencia cardíaca"
+hr_max = historical_hr_max
+
+z1 = hr_max * 0.60
+z2 = hr_max * 0.70
+z3 = hr_max * 0.80
+z4 = hr_max * 0.90
+
+zone_limits = [
+    z1,
+    z2,
+    z3,
+    z4
+]
+
+# =========================
+# ZONE FUNCTION
+# =========================
+
+def get_zone_color(
+    hr,
+    z1,
+    z2,
+    z3,
+    z4
+):
+
+    if hr < z1:
+
+        return "darkgreen"
+
+    elif hr < z2:
+
+        return "blue"
+
+    elif hr < z3:
+
+        return "yellow"
+
+    elif hr < z4:
+
+        return "orange"
+
+    else:
+
+        return "red"
+
+# =========================
+# FIGURE
+# =========================
+
+fig, ax = plt.subplots(
+    figsize=(14, 4)
 )
 
-fig_hr, ax_hr = plt.subplots(
-    figsize=(14, 5)
+ax.set_facecolor(
+    "white"
 )
 
-ax_hr.plot(
-    session_df["minutes"],
-    session_df["heart_rate"],
-    linewidth=2
-)
+# =========================
+# COROS / SUUNTO
+# =========================
 
-ax_hr.set_xlabel(
+if selected_device in [
+    "COROS",
+    "SUUNTO"
+]:
+
+    colors = []
+
+    for hr in session_df[
+        "heart_rate"
+    ]:
+
+        colors.append(
+            get_zone_color(
+                hr,
+                z1,
+                z2,
+                z3,
+                z4
+            )
+        )
+
+    ax.scatter(
+        session_df["minutes"],
+        session_df["heart_rate"],
+        c=colors,
+        s=10,
+        alpha=0.9,
+        linewidths=0
+    )
+
+# =========================
+# MYZONE
+# =========================
+
+else:
+
+    session_df["minute_bin"] = (
+        session_df["minutes"]
+        .round()
+    )
+
+    myzone_minute = (
+        session_df
+        .groupby("minute_bin")
+        .agg({
+            "heart_rate": "mean"
+        })
+        .reset_index()
+    )
+
+    for i in range(
+        len(myzone_minute) - 1
+    ):
+
+        x1 = myzone_minute.iloc[i][
+            "minute_bin"
+        ]
+
+        x2 = myzone_minute.iloc[i + 1][
+            "minute_bin"
+        ]
+
+        y1 = myzone_minute.iloc[i][
+            "heart_rate"
+        ]
+
+        y2 = myzone_minute.iloc[i + 1][
+            "heart_rate"
+        ]
+
+        crossings = []
+
+        for limit in zone_limits:
+
+            if (
+                (y1 < limit and y2 > limit)
+                or
+                (y1 > limit and y2 < limit)
+            ):
+
+                ratio = (
+                    (limit - y1)
+                    /
+                    (y2 - y1)
+                )
+
+                cross_x = (
+                    x1
+                    +
+                    ratio * (x2 - x1)
+                )
+
+                crossings.append(
+                    (
+                        cross_x,
+                        limit
+                    )
+                )
+
+        points = [
+            (x1, y1)
+        ]
+
+        points.extend(
+            crossings
+        )
+
+        points.append(
+            (x2, y2)
+        )
+
+        points = sorted(
+            points,
+            key=lambda p: p[0]
+        )
+
+        for j in range(
+            len(points) - 1
+        ):
+
+            px1, py1 = points[j]
+
+            px2, py2 = points[j + 1]
+
+            mid_hr = (
+                py1 + py2
+            ) / 2
+
+            color = get_zone_color(
+                mid_hr,
+                z1,
+                z2,
+                z3,
+                z4
+            )
+
+            ax.plot(
+                [px1, px2],
+                [py1, py2],
+                color=color,
+                linewidth=4,
+                solid_capstyle="round"
+            )
+
+# =========================
+# AXIS
+# =========================
+
+ax.set_xlabel(
     "Minutos"
 )
 
-ax_hr.set_ylabel(
+ax.set_ylabel(
     "FC"
 )
 
-ax_hr.grid(True)
+ax.set_title(
+    (
+        f"Frecuencia cardíaca - "
+        f"{selected_device} - "
+        f"Sesión {selected_session_id}"
+    )
+)
 
-st.pyplot(fig_hr)
+ax.grid(True)
+
+max_minutes = int(
+    session_df["minutes"].max()
+)
+
+ax.set_xticks(
+    range(
+        0,
+        max_minutes + 5,
+        5
+    )
+)
+
+st.pyplot(fig)
 
 # =========================
 # SPEED GRAPH
@@ -719,7 +892,7 @@ if (
 
     if not speed_df.empty:
 
-        st.subheader(
+        st.header(
             "Velocidad"
         )
 
@@ -728,7 +901,7 @@ if (
         )
 
         fig_speed, ax_speed = plt.subplots(
-            figsize=(14, 5)
+            figsize=(14, 4)
         )
 
         ax_speed.plot(
@@ -763,8 +936,8 @@ if (
 
     if not dist_df.empty:
 
-        st.subheader(
-            "Distancia acumulada"
+        st.header(
+            "Distancia"
         )
 
         dist_df["distance_km"] = (
@@ -772,7 +945,7 @@ if (
         )
 
         fig_dist, ax_dist = plt.subplots(
-            figsize=(14, 5)
+            figsize=(14, 4)
         )
 
         ax_dist.plot(
@@ -798,7 +971,10 @@ if (
 # =========================
 
 if (
-    selected_device in ["COROS", "SUUNTO"]
+    selected_device in [
+        "COROS",
+        "SUUNTO"
+    ]
     and "x" in session_df.columns
     and "y" in session_df.columns
 ):
@@ -813,8 +989,6 @@ if (
             "🔥 Heatmap"
         )
 
-        # REMOVE OUTSIDE COURT
-
         heatmap_df = heatmap_df[
             (heatmap_df["x"] >= 0)
             &
@@ -825,120 +999,58 @@ if (
             (heatmap_df["y"] <= 15)
         ].copy()
 
-        # REMOVE OUTLIERS
+        if not heatmap_df.empty:
 
-        x_min = heatmap_df["x"].quantile(0.009)
-        x_max = heatmap_df["x"].quantile(0.991)
-
-        y_min = heatmap_df["y"].quantile(0.009)
-        y_max = heatmap_df["y"].quantile(0.991)
-
-        heatmap_df = heatmap_df[
-            (heatmap_df["x"] >= x_min)
-            &
-            (heatmap_df["x"] <= x_max)
-            &
-            (heatmap_df["y"] >= y_min)
-            &
-            (heatmap_df["y"] <= y_max)
-        ].copy()
-
-        # RESCALE
-
-        heatmap_df["x"] = (
-            (
-                heatmap_df["x"]
-                - heatmap_df["x"].min()
+            fig_heat, ax_heat = plt.subplots(
+                figsize=(10, 5)
             )
-            /
-            (
-                heatmap_df["x"].max()
-                - heatmap_df["x"].min()
+
+            hb = ax_heat.hexbin(
+                heatmap_df["x"],
+                heatmap_df["y"],
+                gridsize=20,
+                extent=(0, 28, 0, 15),
+                cmap="Reds",
+                mincnt=1
             )
-        ) * 28
-
-        heatmap_df["y"] = (
-            (
-                heatmap_df["y"]
-                - heatmap_df["y"].min()
-            )
-            /
-            (
-                heatmap_df["y"].max()
-                - heatmap_df["y"].min()
-            )
-        ) * 15
-
-        # COURT
-
-        def draw_court(ax):
-
-            court_length = 28
-            court_width = 15
 
             outer = Rectangle(
                 (0, 0),
-                court_length,
-                court_width,
+                28,
+                15,
                 linewidth=2,
                 color="black",
                 fill=False
             )
 
-            ax.add_patch(outer)
-
-            ax.plot(
-                [court_length / 2,
-                 court_length / 2],
-                [0, court_width],
-                color="black"
+            ax_heat.add_patch(
+                outer
             )
 
-            center_circle = Circle(
-                (
-                    court_length / 2,
-                    court_width / 2
-                ),
-                1.8,
-                linewidth=2,
-                color="black",
-                fill=False
+            ax_heat.set_xlim(
+                0,
+                28
             )
 
-            ax.add_patch(center_circle)
+            ax_heat.set_ylim(
+                0,
+                15
+            )
 
-            ax.set_xlim(0, 28)
-            ax.set_ylim(0, 15)
+            ax_heat.set_aspect(
+                "equal"
+            )
 
-            ax.set_aspect("equal")
+            ax_heat.set_xticks([])
+            ax_heat.set_yticks([])
 
-            ax.set_xticks([])
-            ax.set_yticks([])
+            cb = fig_heat.colorbar(
+                hb,
+                ax=ax_heat
+            )
 
-        # DRAW HEATMAP
+            cb.set_label(
+                "Densidad"
+            )
 
-        fig_heat, ax_heat = plt.subplots(
-            figsize=(10, 5)
-        )
-
-        hb = ax_heat.hexbin(
-            heatmap_df["x"],
-            heatmap_df["y"],
-            gridsize=20,
-            extent=(0, 28, 0, 15),
-            cmap="Reds",
-            mincnt=1
-        )
-
-        draw_court(ax_heat)
-
-        cb = fig_heat.colorbar(
-            hb,
-            ax=ax_heat
-        )
-
-        cb.set_label(
-            "Densidad"
-        )
-
-        st.pyplot(fig_heat)
+            st.pyplot(fig_heat)

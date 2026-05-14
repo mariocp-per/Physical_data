@@ -4,9 +4,19 @@ import streamlit as st
 import pandas as pd
 import matplotlib.pyplot as plt
 
-from database.player_repository import get_players
-from database.db import get_connection
+from matplotlib.patches import (
+    Rectangle,
+    Circle,
+    Arc
+)
 
+from database.player_repository import (
+    get_players
+)
+
+from database.db import (
+    get_connection
+)
 
 # =========================
 # PAGE CONFIG
@@ -18,7 +28,6 @@ st.set_page_config(
 )
 
 st.title("👥 Jugadoras")
-
 
 # =========================
 # LOAD PLAYERS
@@ -33,7 +42,6 @@ if players.empty:
     )
 
     st.stop()
-
 
 # =========================
 # PLAYER SELECTOR
@@ -52,7 +60,6 @@ selected_player = st.selectbox(
 player_id = player_options[
     selected_player
 ]
-
 
 # =========================
 # PLAYER INFO
@@ -87,7 +94,6 @@ c4.metric(
     "Dorsal",
     player_row["dorsal"]
 )
-
 
 # =========================
 # LOAD RAW DATA
@@ -124,15 +130,12 @@ suunto_df = pd.read_sql_query(
 
 conn.close()
 
-
 # =========================
 # HISTORICAL METRICS
 # =========================
 
 all_hr = []
 all_speed = []
-
-# COROS
 
 if not coros_df.empty:
 
@@ -153,8 +156,6 @@ if not coros_df.empty:
             ).tolist()
         )
 
-# MYZONE
-
 if not myzone_df.empty:
 
     if "heart_rate" in myzone_df.columns:
@@ -164,8 +165,6 @@ if not myzone_df.empty:
             .dropna()
             .tolist()
         )
-
-# SUUNTO
 
 if not suunto_df.empty:
 
@@ -208,7 +207,6 @@ if len(all_speed) > 0:
         2
     )
 
-
 # =========================
 # TOTAL SESSIONS
 # =========================
@@ -235,7 +233,6 @@ if not suunto_df.empty:
         suunto_df["session_id"]
         .nunique()
     )
-
 
 # =========================
 # METRICS
@@ -273,6 +270,11 @@ if historical_hr_max is not None:
         total_sessions
     )
 
+else:
+
+    st.info(
+        "No hay datos monitorizados"
+    )
 
 # =========================
 # ZONES
@@ -371,13 +373,12 @@ if historical_hr_max is not None:
         use_container_width=True
     )
 
-
 # =========================
 # SESSION SELECTOR
 # =========================
 
 st.header(
-    "Comparación de sesiones"
+    "Sesión"
 )
 
 conn = get_connection()
@@ -388,7 +389,6 @@ FROM (
 
     SELECT
         da.session_id as session_id,
-        da.player_id as player_id,
         da.device_type as device,
         MAX(c.timestamp) as session_date
     FROM device_assignments da
@@ -399,14 +399,12 @@ FROM (
     AND da.device_type = 'COROS'
     GROUP BY
         da.session_id,
-        da.player_id,
         da.device_type
 
     UNION ALL
 
     SELECT
         da.session_id as session_id,
-        da.player_id as player_id,
         da.device_type as device,
         MAX(m.timestamp) as session_date
     FROM device_assignments da
@@ -417,14 +415,12 @@ FROM (
     AND da.device_type = 'MYZONE'
     GROUP BY
         da.session_id,
-        da.player_id,
         da.device_type
 
     UNION ALL
 
     SELECT
         da.session_id as session_id,
-        da.player_id as player_id,
         da.device_type as device,
         MAX(s.timestamp) as session_date
     FROM device_assignments da
@@ -435,7 +431,6 @@ FROM (
     AND da.device_type = 'SUUNTO'
     GROUP BY
         da.session_id,
-        da.player_id,
         da.device_type
 
 )
@@ -448,7 +443,9 @@ sessions_df = pd.read_sql_query(
     conn
 )
 
-conn.close()
+# =========================
+# VALIDATION
+# =========================
 
 if sessions_df.empty:
 
@@ -456,12 +453,9 @@ if sessions_df.empty:
         "La jugadora no tiene sesiones"
     )
 
+    conn.close()
+
     st.stop()
-
-
-# =========================
-# CLEAN DATES
-# =========================
 
 sessions_df["session_date"] = pd.to_datetime(
     sessions_df["session_date"],
@@ -472,26 +466,9 @@ sessions_df = sessions_df.dropna(
     subset=["session_date"]
 )
 
-sessions_df = sessions_df.sort_values(
-    "session_date",
-    ascending=False
-)
-
-
-# =========================
-# SESSION OPTIONS
-# =========================
-
-sessions_df["session_key"] = (
-    sessions_df["device"]
-    + "_"
-    + sessions_df["session_id"]
-        .astype(str)
-)
-
 sessions_df["label"] = (
     sessions_df["device"]
-    + " | "
+    + " | Sesión "
     + sessions_df["session_id"]
         .astype(str)
     + " | "
@@ -499,206 +476,122 @@ sessions_df["label"] = (
         .dt.strftime("%d/%m %H:%M")
 )
 
-session_options = {
-    row["label"]: row["session_key"]
-    for _, row in sessions_df.iterrows()
-}
-
-default_sessions = list(
-    session_options.keys()
-)[:2]
-
-selected_labels = st.multiselect(
-    "Seleccionar sesiones",
-    list(session_options.keys()),
-    default=default_sessions
+selected_label = st.selectbox(
+    "Seleccionar sesión",
+    sessions_df["label"].tolist(),
+    index=0
 )
 
-selected_keys = [
-    session_options[label]
-    for label in selected_labels
+selected_session = sessions_df[
+    sessions_df["label"]
+    == selected_label
+].iloc[0]
+
+selected_session_id = selected_session[
+    "session_id"
 ]
 
-selected_sessions_df = sessions_df[
-    sessions_df["session_key"]
-    .isin(selected_keys)
+selected_device = selected_session[
+    "device"
 ]
 
-if selected_sessions_df.empty:
-
-    st.stop()
-
-
 # =========================
-# LOAD TIMELINES
+# LOAD SESSION DATA
 # =========================
 
-conn = get_connection()
+if selected_device == "COROS":
 
-# COROS
-
-coros_timeline = pd.DataFrame()
-
-selected_coros = selected_sessions_df[
-    selected_sessions_df["device"] == "COROS"
-]["session_id"].tolist()
-
-if len(selected_coros) > 0:
-
-    coros_query = f"""
-    SELECT
-        timestamp,
-        session_id,
-        heart_rate,
-        speed,
-        distance
+    session_query = f"""
+    SELECT *
     FROM coros_data
     WHERE player_id = {player_id}
-    AND session_id IN (
-        {",".join(map(str, selected_coros))}
-    )
+    AND session_id = {selected_session_id}
     ORDER BY timestamp
     """
 
-    coros_timeline = pd.read_sql_query(
-        coros_query,
-        conn
-    )
+elif selected_device == "MYZONE":
 
-    coros_timeline["device"] = "COROS"
-
-    coros_timeline["session_key"] = (
-        coros_timeline["device"]
-        + "_"
-        + coros_timeline["session_id"]
-            .astype(str)
-    )
-
-# MYZONE
-
-myzone_timeline = pd.DataFrame()
-
-selected_myzone = selected_sessions_df[
-    selected_sessions_df["device"] == "MYZONE"
-]["session_id"].tolist()
-
-if len(selected_myzone) > 0:
-
-    myzone_query = f"""
-    SELECT
-        timestamp,
-        session_id,
-        heart_rate
+    session_query = f"""
+    SELECT *
     FROM myzone_data
     WHERE player_id = {player_id}
-    AND session_id IN (
-        {",".join(map(str, selected_myzone))}
-    )
+    AND session_id = {selected_session_id}
     ORDER BY timestamp
     """
 
-    myzone_timeline = pd.read_sql_query(
-        myzone_query,
-        conn
-    )
+else:
 
-    myzone_timeline["device"] = "MYZONE"
-
-    myzone_timeline["session_key"] = (
-        myzone_timeline["device"]
-        + "_"
-        + myzone_timeline["session_id"]
-            .astype(str)
-    )
-
-# SUUNTO
-
-suunto_timeline = pd.DataFrame()
-
-selected_suunto = selected_sessions_df[
-    selected_sessions_df["device"] == "SUUNTO"
-]["session_id"].tolist()
-
-if len(selected_suunto) > 0:
-
-    suunto_query = f"""
-    SELECT
-        timestamp,
-        session_id,
-        heart_rate,
-        speed,
-        distance
+    session_query = f"""
+    SELECT *
     FROM suunto_data
     WHERE player_id = {player_id}
-    AND session_id IN (
-        {",".join(map(str, selected_suunto))}
-    )
+    AND session_id = {selected_session_id}
     ORDER BY timestamp
     """
 
-    suunto_timeline = pd.read_sql_query(
-        suunto_query,
-        conn
-    )
+session_df = pd.read_sql_query(
+    session_query,
+    conn
+)
 
-    suunto_timeline["device"] = "SUUNTO"
+# =========================
+# LOAD TRAINING SESSION
+# =========================
 
-    suunto_timeline["session_key"] = (
-        suunto_timeline["device"]
-        + "_"
-        + suunto_timeline["session_id"]
-            .astype(str)
-    )
+training_query = f"""
+SELECT *
+FROM training_sessions
+WHERE id = {selected_session_id}
+"""
+
+training_df = pd.read_sql_query(
+    training_query,
+    conn
+)
 
 conn.close()
 
-
 # =========================
-# COMBINE TIMELINES
+# VALIDATION
 # =========================
 
-timeline_df = pd.concat(
-    [
-        coros_timeline,
-        myzone_timeline,
-        suunto_timeline
-    ],
-    ignore_index=True
-)
+if session_df.empty:
 
-if timeline_df.empty:
-
-    st.info(
-        "No hay datos disponibles"
+    st.warning(
+        "No hay datos para la sesión"
     )
 
     st.stop()
 
-timeline_df["timestamp"] = pd.to_datetime(
-    timeline_df["timestamp"],
+# =========================
+# CLEAN TIMESTAMP
+# =========================
+
+session_df["timestamp"] = pd.to_datetime(
+    session_df["timestamp"],
     errors="coerce"
 )
 
-timeline_df = timeline_df.dropna(
+session_df = session_df.dropna(
     subset=["timestamp"]
 )
 
+session_df = session_df.sort_values(
+    "timestamp"
+)
 
 # =========================
-# COLORS
+# TIME AXIS
 # =========================
 
-session_colors = [
-    "blue",
-    "red",
-    "green",
-    "orange",
-    "purple",
-    "black",
-    "brown",
-    "pink"
-]
+start_time = session_df[
+    "timestamp"
+].min()
 
+session_df["minutes"] = (
+    session_df["timestamp"]
+    - start_time
+).dt.total_seconds() / 60
 
 # =========================
 # HR GRAPH
@@ -712,47 +605,11 @@ fig_hr, ax_hr = plt.subplots(
     figsize=(14, 5)
 )
 
-for idx, (_, row) in enumerate(
-    selected_sessions_df.iterrows()
-):
-
-    session = row["session_id"]
-
-    device = row["device"]
-
-    session_key = f"{device}_{session}"
-
-    session_df = timeline_df[
-        timeline_df["session_key"]
-        == session_key
-    ].copy()
-
-    if session_df.empty:
-
-        continue
-
-    session_df = session_df.sort_values(
-        "timestamp"
-    )
-
-    start_time = session_df[
-        "timestamp"
-    ].min()
-
-    session_df["minutes"] = (
-        session_df["timestamp"]
-        - start_time
-    ).dt.total_seconds() / 60
-
-    ax_hr.plot(
-        session_df["minutes"],
-        session_df["heart_rate"],
-        label=row["label"],
-        linewidth=2,
-        color=session_colors[
-            idx % len(session_colors)
-        ]
-    )
+ax_hr.plot(
+    session_df["minutes"],
+    session_df["heart_rate"],
+    linewidth=2
+)
 
 ax_hr.set_xlabel(
     "Minutos"
@@ -764,6 +621,347 @@ ax_hr.set_ylabel(
 
 ax_hr.grid(True)
 
-ax_hr.legend()
-
 st.pyplot(fig_hr)
+
+# =========================
+# SPEED GRAPH
+# =========================
+
+if (
+    "speed" in session_df.columns
+):
+
+    speed_df = session_df.dropna(
+        subset=["speed"]
+    ).copy()
+
+    if not speed_df.empty:
+
+        st.subheader(
+            "Velocidad"
+        )
+
+        speed_df["speed_kmh"] = (
+            speed_df["speed"] * 3.6
+        )
+
+        fig_speed, ax_speed = plt.subplots(
+            figsize=(14, 5)
+        )
+
+        ax_speed.plot(
+            speed_df["minutes"],
+            speed_df["speed_kmh"],
+            linewidth=2
+        )
+
+        ax_speed.set_xlabel(
+            "Minutos"
+        )
+
+        ax_speed.set_ylabel(
+            "km/h"
+        )
+
+        ax_speed.grid(True)
+
+        st.pyplot(fig_speed)
+
+# =========================
+# DISTANCE GRAPH
+# =========================
+
+if (
+    "distance" in session_df.columns
+):
+
+    dist_df = session_df.dropna(
+        subset=["distance"]
+    ).copy()
+
+    if not dist_df.empty:
+
+        st.subheader(
+            "Distancia acumulada"
+        )
+
+        dist_df["distance_km"] = (
+            dist_df["distance"] / 1000
+        )
+
+        fig_dist, ax_dist = plt.subplots(
+            figsize=(14, 5)
+        )
+
+        ax_dist.plot(
+            dist_df["minutes"],
+            dist_df["distance_km"],
+            linewidth=2
+        )
+
+        ax_dist.set_xlabel(
+            "Minutos"
+        )
+
+        ax_dist.set_ylabel(
+            "Kilómetros"
+        )
+
+        ax_dist.grid(True)
+
+        st.pyplot(fig_dist)
+
+# =========================
+# HEATMAP
+# =========================
+
+if (
+    selected_device in ["COROS", "SUUNTO"]
+    and "x" in session_df.columns
+    and "y" in session_df.columns
+):
+
+    heatmap_df = session_df.dropna(
+        subset=["x", "y"]
+    ).copy()
+
+    if not heatmap_df.empty:
+
+        st.header(
+            "🔥 Heatmap"
+        )
+
+        # =========================
+        # REMOVE OUTSIDE COURT
+        # =========================
+
+        heatmap_df = heatmap_df[
+            (heatmap_df["x"] >= 0)
+            &
+            (heatmap_df["x"] <= 28)
+            &
+            (heatmap_df["y"] >= 0)
+            &
+            (heatmap_df["y"] <= 15)
+        ].copy()
+
+        # =========================
+        # REMOVE OUTLIERS
+        # =========================
+
+        x_min = heatmap_df["x"].quantile(0.009)
+        x_max = heatmap_df["x"].quantile(0.991)
+
+        y_min = heatmap_df["y"].quantile(0.009)
+        y_max = heatmap_df["y"].quantile(0.991)
+
+        heatmap_df = heatmap_df[
+            (heatmap_df["x"] >= x_min)
+            &
+            (heatmap_df["x"] <= x_max)
+            &
+            (heatmap_df["y"] >= y_min)
+            &
+            (heatmap_df["y"] <= y_max)
+        ].copy()
+
+        # =========================
+        # RESCALE
+        # =========================
+
+        heatmap_df["x"] = (
+            (
+                heatmap_df["x"]
+                - heatmap_df["x"].min()
+            )
+            /
+            (
+                heatmap_df["x"].max()
+                - heatmap_df["x"].min()
+            )
+        ) * 28
+
+        heatmap_df["y"] = (
+            (
+                heatmap_df["y"]
+                - heatmap_df["y"].min()
+            )
+            /
+            (
+                heatmap_df["y"].max()
+                - heatmap_df["y"].min()
+            )
+        ) * 15
+
+        # =========================
+        # DRAW COURT
+        # =========================
+
+        def draw_court(ax):
+
+            court_length = 28
+            court_width = 15
+
+            outer = Rectangle(
+                (0, 0),
+                court_length,
+                court_width,
+                linewidth=2,
+                color="black",
+                fill=False,
+                zorder=10
+            )
+
+            ax.add_patch(outer)
+
+            ax.plot(
+                [court_length / 2,
+                 court_length / 2],
+                [0, court_width],
+                color="black",
+                zorder=10
+            )
+
+            center_circle = Circle(
+                (
+                    court_length / 2,
+                    court_width / 2
+                ),
+                1.8,
+                linewidth=2,
+                color="black",
+                fill=False,
+                zorder=10
+            )
+
+            ax.add_patch(center_circle)
+
+            paint_width = 4.9
+            paint_height = 5.8
+
+            left_paint = Rectangle(
+                (
+                    0,
+                    (court_width - paint_height) / 2
+                ),
+                paint_width,
+                paint_height,
+                linewidth=2,
+                color="black",
+                fill=False,
+                zorder=10
+            )
+
+            right_paint = Rectangle(
+                (
+                    court_length - paint_width,
+                    (court_width - paint_height) / 2
+                ),
+                paint_width,
+                paint_height,
+                linewidth=2,
+                color="black",
+                fill=False,
+                zorder=10
+            )
+
+            ax.add_patch(left_paint)
+            ax.add_patch(right_paint)
+
+            left_hoop = Circle(
+                (
+                    1.575,
+                    court_width / 2
+                ),
+                0.225,
+                linewidth=2,
+                color="black",
+                fill=False,
+                zorder=10
+            )
+
+            right_hoop = Circle(
+                (
+                    court_length - 1.575,
+                    court_width / 2
+                ),
+                0.225,
+                linewidth=2,
+                color="black",
+                fill=False,
+                zorder=10
+            )
+
+            ax.add_patch(left_hoop)
+            ax.add_patch(right_hoop)
+
+            triple_radius = 6.75
+
+            left_arc = Arc(
+                (
+                    1.575,
+                    court_width / 2
+                ),
+                triple_radius * 2,
+                triple_radius * 2,
+                theta1=-78,
+                theta2=78,
+                linewidth=2,
+                color="black",
+                zorder=10
+            )
+
+            right_arc = Arc(
+                (
+                    court_length - 1.575,
+                    court_width / 2
+                ),
+                triple_radius * 2,
+                triple_radius * 2,
+                theta1=102,
+                theta2=258,
+                linewidth=2,
+                color="black",
+                zorder=10
+            )
+
+            ax.add_patch(left_arc)
+            ax.add_patch(right_arc)
+
+            ax.set_xlim(0, court_length)
+            ax.set_ylim(0, court_width)
+
+            ax.set_aspect("equal")
+
+            ax.set_xticks([])
+            ax.set_yticks([])
+
+        # =========================
+        # DRAW HEATMAP
+        # =========================
+
+        fig_heat, ax_heat = plt.subplots(
+            figsize=(10, 5)
+        )
+
+        hb = ax_heat.hexbin(
+            heatmap_df["x"],
+            heatmap_df["y"],
+            gridsize=20,
+            extent=(0, 28, 0, 15),
+            cmap="Reds",
+            mincnt=1
+        )
+
+        draw_court(ax_heat)
+
+        cb = fig_heat.colorbar(
+            hb,
+            ax=ax_heat
+        )
+
+        cb.set_label(
+            "Densidad"
+        )
+
+        st.pyplot(fig_heat)

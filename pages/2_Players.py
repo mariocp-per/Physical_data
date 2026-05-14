@@ -128,8 +128,6 @@ suunto_df = pd.read_sql_query(
     conn
 )
 
-conn.close()
-
 # =========================
 # HISTORICAL METRICS
 # =========================
@@ -381,8 +379,6 @@ st.header(
     "Sesión"
 )
 
-conn = get_connection()
-
 sessions_query = f"""
 SELECT *
 FROM (
@@ -457,14 +453,44 @@ if sessions_df.empty:
 
     st.stop()
 
+# =========================
+# CLEAN DATES
+# =========================
+
 sessions_df["session_date"] = pd.to_datetime(
     sessions_df["session_date"],
     errors="coerce"
 )
 
-sessions_df = sessions_df.dropna(
-    subset=["session_date"]
+valid_dates = sessions_df[
+    sessions_df["session_date"].notna()
+].copy()
+
+invalid_dates = sessions_df[
+    sessions_df["session_date"].isna()
+].copy()
+
+valid_dates = valid_dates.sort_values(
+    "session_date",
+    ascending=False
 )
+
+sessions_df = pd.concat(
+    [
+        valid_dates,
+        invalid_dates
+    ]
+)
+
+sessions_df["session_date"] = (
+    sessions_df["session_date"]
+    .astype(str)
+    .replace("NaT", "Sin fecha")
+)
+
+# =========================
+# LABELS
+# =========================
 
 sessions_df["label"] = (
     sessions_df["device"]
@@ -473,7 +499,6 @@ sessions_df["label"] = (
         .astype(str)
     + " | "
     + sessions_df["session_date"]
-        .dt.strftime("%d/%m %H:%M")
 )
 
 selected_label = st.selectbox(
@@ -731,9 +756,7 @@ if (
             "🔥 Heatmap"
         )
 
-        # =========================
         # REMOVE OUTSIDE COURT
-        # =========================
 
         heatmap_df = heatmap_df[
             (heatmap_df["x"] >= 0)
@@ -745,9 +768,7 @@ if (
             (heatmap_df["y"] <= 15)
         ].copy()
 
-        # =========================
-        # REMOVE OUTLIERS
-        # =========================
+        # REMOVE GPS OUTLIERS
 
         x_min = heatmap_df["x"].quantile(0.009)
         x_max = heatmap_df["x"].quantile(0.991)
@@ -765,9 +786,7 @@ if (
             (heatmap_df["y"] <= y_max)
         ].copy()
 
-        # =========================
         # RESCALE
-        # =========================
 
         heatmap_df["x"] = (
             (
@@ -793,9 +812,7 @@ if (
             )
         ) * 15
 
-        # =========================
-        # DRAW COURT
-        # =========================
+        # COURT
 
         def draw_court(ax):
 
@@ -808,8 +825,7 @@ if (
                 court_width,
                 linewidth=2,
                 color="black",
-                fill=False,
-                zorder=10
+                fill=False
             )
 
             ax.add_patch(outer)
@@ -818,8 +834,7 @@ if (
                 [court_length / 2,
                  court_length / 2],
                 [0, court_width],
-                color="black",
-                zorder=10
+                color="black"
             )
 
             center_circle = Circle(
@@ -830,115 +845,20 @@ if (
                 1.8,
                 linewidth=2,
                 color="black",
-                fill=False,
-                zorder=10
+                fill=False
             )
 
             ax.add_patch(center_circle)
 
-            paint_width = 4.9
-            paint_height = 5.8
-
-            left_paint = Rectangle(
-                (
-                    0,
-                    (court_width - paint_height) / 2
-                ),
-                paint_width,
-                paint_height,
-                linewidth=2,
-                color="black",
-                fill=False,
-                zorder=10
-            )
-
-            right_paint = Rectangle(
-                (
-                    court_length - paint_width,
-                    (court_width - paint_height) / 2
-                ),
-                paint_width,
-                paint_height,
-                linewidth=2,
-                color="black",
-                fill=False,
-                zorder=10
-            )
-
-            ax.add_patch(left_paint)
-            ax.add_patch(right_paint)
-
-            left_hoop = Circle(
-                (
-                    1.575,
-                    court_width / 2
-                ),
-                0.225,
-                linewidth=2,
-                color="black",
-                fill=False,
-                zorder=10
-            )
-
-            right_hoop = Circle(
-                (
-                    court_length - 1.575,
-                    court_width / 2
-                ),
-                0.225,
-                linewidth=2,
-                color="black",
-                fill=False,
-                zorder=10
-            )
-
-            ax.add_patch(left_hoop)
-            ax.add_patch(right_hoop)
-
-            triple_radius = 6.75
-
-            left_arc = Arc(
-                (
-                    1.575,
-                    court_width / 2
-                ),
-                triple_radius * 2,
-                triple_radius * 2,
-                theta1=-78,
-                theta2=78,
-                linewidth=2,
-                color="black",
-                zorder=10
-            )
-
-            right_arc = Arc(
-                (
-                    court_length - 1.575,
-                    court_width / 2
-                ),
-                triple_radius * 2,
-                triple_radius * 2,
-                theta1=102,
-                theta2=258,
-                linewidth=2,
-                color="black",
-                zorder=10
-            )
-
-            ax.add_patch(left_arc)
-            ax.add_patch(right_arc)
-
-            ax.set_xlim(0, court_length)
-            ax.set_ylim(0, court_width)
+            ax.set_xlim(0, 28)
+            ax.set_ylim(0, 15)
 
             ax.set_aspect("equal")
 
             ax.set_xticks([])
             ax.set_yticks([])
 
-        # =========================
         # DRAW HEATMAP
-        # =========================
 
         fig_heat, ax_heat = plt.subplots(
             figsize=(10, 5)

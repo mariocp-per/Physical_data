@@ -7,6 +7,16 @@ from metrics.player_profile import (
     get_player_hr_profile
 )
 
+from metrics.advanced_metrics import (
+    prepare_dataframe,
+    calculate_hsr_distance,
+    calculate_accelerations,
+    calculate_decelerations,
+    calculate_sprints,
+    calculate_player_load,
+    calculate_rsa
+)
+
 # =========================================================
 # CONFIG
 # =========================================================
@@ -25,6 +35,34 @@ def build_player_session_metrics(
     conn = sqlite3.connect(
         DB_PATH
     )
+
+
+    if gps_df is not None and not gps_df.empty:
+
+    gps_df = prepare_dataframe(gps_df)
+
+    # HSR
+    hsr_distance = calculate_hsr_distance(gps_df)
+
+    # Accelerations
+    accelerations = calculate_accelerations(gps_df)
+
+    # Decelerations
+    decelerations = calculate_decelerations(gps_df)
+
+    # Sprints
+    sprint_metrics = calculate_sprints(gps_df)
+
+    sprint_count = sprint_metrics[
+        "sprint_count"
+    ]
+
+    sprint_distance = sprint_metrics[
+        "sprint_distance"
+    ]
+
+    # RSA
+    rsa = calculate_rsa(gps_df)
 
     # =====================================================
     # PLAYER + SESSION INFO
@@ -368,19 +406,13 @@ def build_player_session_metrics(
     # PLAYER LOAD
     # =====================================================
 
-    player_load = round(
-
-        (
-            avg_hr * 0.4
-            +
-            total_distance * 0.02
-            +
-            max_speed * 2
-            +
-            sprint_count * 0.5
-        ),
-
-        2
+    player_load = calculate_player_load(
+    avg_hr,
+    total_distance,
+    sprint_count,
+    accelerations,
+    decelerations,
+    hsr_distance
     )
 
     # =====================================================
@@ -508,6 +540,10 @@ def build_player_session_metrics(
                 if hr_df is None
                 else len(hr_df)
             )
+        "hsr_distance": hsr_distance,
+    "accelerations": accelerations,
+    "decelerations": decelerations,
+    "rsa": rsa,
     }
 
     return metrics

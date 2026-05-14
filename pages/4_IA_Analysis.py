@@ -1,4 +1,4 @@
-# pages/4_IA_Analysis.py
+# pages/4_Session_analitics.py
 
 import streamlit as st
 import sqlite3
@@ -19,7 +19,7 @@ from metrics.player_profile import (
 DB_PATH = "BT_db.db"
 
 st.set_page_config(
-    page_title="IA Rendimiento",
+    page_title="Rendimiento de Sesión",
     page_icon="🧠",
     layout="wide"
 )

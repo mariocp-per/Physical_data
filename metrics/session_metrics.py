@@ -1,279 +1,540 @@
-# metrics/session_metrics.py
+# pages/4_IA_Analysis.py
 
+import streamlit as st
 import sqlite3
 import pandas as pd
 
+from metrics.session_metrics import (
+    build_player_session_metrics
+)
+
+from metrics.player_profile import (
+    get_player_hr_profile
+)
+
+# =========================================================
+# CONFIG
+# =========================================================
+
 DB_PATH = "BT_db.db"
 
+st.set_page_config(
+    page_title="IA Rendimiento",
+    page_icon="🧠",
+    layout="wide"
+)
 
-def build_player_session_metrics(session_id, player_id):
+# =========================================================
+# DB FUNCTIONS
+# =========================================================
+
+@st.cache_data
+def get_sessions():
 
     conn = sqlite3.connect(DB_PATH)
 
-    # =========================================================
-    # INFO JUGADORA + SESIÓN
-    # =========================================================
-
-    session_query = f"""
+    query = """
     SELECT
-        ts.id AS session_id,
-        ts.session_date,
-        ts.notes,
-        ts.location,
-        ts.flg_game,
+        id,
+        session_date,
+        location,
+        flg_game,
+        notes
+    FROM training_sessions
+    ORDER BY session_date DESC
+    """
 
-        p.id AS player_id,
+    df = pd.read_sql(query, conn)
+
+    conn.close()
+
+    return df
+
+
+@st.cache_data
+def get_players_by_session(session_id):
+
+    conn = sqlite3.connect(DB_PATH)
+
+    query = f"""
+    SELECT DISTINCT
+        p.id,
         p.name,
         p.surname,
         p.dorsal
 
-    FROM training_sessions ts
-
-    INNER JOIN device_assignments da
-        ON da.session_id = ts.id
+    FROM device_assignments da
 
     INNER JOIN players p
         ON p.id = da.player_id
 
-    WHERE ts.id = {session_id}
-    AND p.id = {player_id}
+    WHERE da.session_id = {session_id}
+
+    ORDER BY p.surname
     """
 
-    session_df = pd.read_sql(session_query, conn)
-
-    if session_df.empty:
-        conn.close()
-        return None
-
-    session_info = session_df.iloc[0]
-
-    # =========================================================
-    # COROS DATA
-    # =========================================================
-
-    coros_query = f"""
-    SELECT
-        timestamp,
-        heart_rate,
-        speed,
-        distance,
-        x,
-        y
-
-    FROM coros_data
-
-    WHERE session_id = {session_id}
-    AND player_id = {player_id}
-
-    ORDER BY timestamp
-    """
-
-    coros_df = pd.read_sql(coros_query, conn)
-
-    # =========================================================
-    # SUUNTO DATA
-    # =========================================================
-
-    suunto_query = f"""
-    SELECT
-        timestamp,
-        heart_rate,
-        speed,
-        distance,
-        x,
-        y
-
-    FROM suunto_data
-
-    WHERE session_id = {session_id}
-    AND player_id = {player_id}
-
-    ORDER BY timestamp
-    """
-
-    suunto_df = pd.read_sql(suunto_query, conn)
-
-    # =========================================================
-    # MYZONE DATA
-    # =========================================================
-
-    myzone_query = f"""
-    SELECT
-        timestamp,
-        heart_rate
-
-    FROM myzone_data
-
-    WHERE session_id = {session_id}
-    AND player_id = {player_id}
-
-    ORDER BY timestamp
-    """
-
-    myzone_df = pd.read_sql(myzone_query, conn)
+    df = pd.read_sql(query, conn)
 
     conn.close()
 
-    # =========================================================
-    # PRIORIZACIÓN DISPOSITIVOS
-    # =========================================================
+    return df
 
-    # GPS + velocidad
-    gps_df = None
+# =========================================================
+# IA FUNCTIONS
+# =========================================================
 
-    if not coros_df.empty:
-        gps_df = coros_df
+def calcular_intensidad(metrics):
 
-    elif not suunto_df.empty:
-        gps_df = suunto_df
+    score = 0
 
     # FC
-    hr_df = None
+    if metrics["avg_hr"] >= 170:
+        score += 40
 
-    if not myzone_df.empty:
-        hr_df = myzone_df
+    elif metrics["avg_hr"] >= 155:
+        score += 30
 
-    elif not coros_df.empty:
-        hr_df = coros_df
+    elif metrics["avg_hr"] >= 140:
+        score += 20
 
-    elif not suunto_df.empty:
-        hr_df = suunto_df
+    else:
+        score += 10
 
-    # =========================================================
-    # MÉTRICAS FC
-    # =========================================================
+    # Distancia
+    if metrics["total_distance"] >= 7000:
+        score += 30
 
-    avg_hr = 0
-    max_hr = 0
+    elif metrics["total_distance"] >= 5000:
+        score += 20
 
-    if hr_df is not None and not hr_df.empty:
+    else:
+        score += 10
 
-        hr_clean = hr_df["heart_rate"].dropna()
+    # Velocidad
+    if metrics["max_speed"] >= 24:
+        score += 30
 
-        if not hr_clean.empty:
-            avg_hr = round(hr_clean.mean(), 1)
-            max_hr = round(hr_clean.max(), 1)
+    elif metrics["max_speed"] >= 20:
+        score += 20
 
-    # =========================================================
-    # MÉTRICAS GPS
-    # =========================================================
+    else:
+        score += 10
 
-    total_distance = 0
-    max_speed = 0
-    avg_speed = 0
-    sprint_distance = 0
-    sprint_count = 0
+    return min(score, 100)
 
-    if gps_df is not None and not gps_df.empty:
 
-        speed_clean = gps_df["speed"].dropna()
-        distance_clean = gps_df["distance"].dropna()
+def clasificar_intensidad(score):
 
-        if not speed_clean.empty:
-            max_speed = round(speed_clean.max(), 2)
-            avg_speed = round(speed_clean.mean(), 2)
+    if score >= 80:
+        return "Muy alta"
 
-        if not distance_clean.empty:
-            total_distance = round(distance_clean.max(), 2)
+    elif score >= 60:
+        return "Alta"
 
-        # Sprint > 18 km/h
-        sprint_df = gps_df[gps_df["speed"] >= 18]
+    elif score >= 40:
+        return "Moderada"
 
-        if not sprint_df.empty:
+    return "Baja"
 
-            sprint_count = len(sprint_df)
 
-            sprint_distance = round(
-                sprint_df["distance"].max()
-                - sprint_df["distance"].min(),
-                2
-            )
+def detectar_fatiga(metrics, hr_profile):
 
-    # =========================================================
-    # ZONAS FC
-    # =========================================================
+    if hr_profile is None:
+        return "Sin datos"
 
-    hr_zones = {
-        "z1": 0,
-        "z2": 0,
-        "z3": 0,
-        "z4": 0,
-        "z5": 0
-    }
+    hr_max = hr_profile["hr_max"]
 
-    if hr_df is not None and not hr_df.empty:
-
-        for hr in hr_df["heart_rate"].dropna():
-
-            if hr < 120:
-                hr_zones["z1"] += 1
-
-            elif hr < 140:
-                hr_zones["z2"] += 1
-
-            elif hr < 160:
-                hr_zones["z3"] += 1
-
-            elif hr < 180:
-                hr_zones["z4"] += 1
-
-            else:
-                hr_zones["z5"] += 1
-
-    # =========================================================
-    # PLAYER LOAD SIMPLE
-    # =========================================================
-
-    player_load = round(
-        (
-            avg_hr * 0.4
-            + total_distance * 0.2
-            + max_speed * 2
-            + sprint_count * 0.5
-        ),
-        2
+    hr_ratio = (
+        metrics["avg_hr"] / hr_max
     )
 
-    # =========================================================
-    # RESULTADO FINAL
-    # =========================================================
+    if (
+        hr_ratio > 0.85
+        and metrics["max_speed"] < 18
+    ):
+        return "Alta"
 
-    metrics = {
+    elif hr_ratio > 0.75:
+        return "Moderada"
 
-        # Session
-        "session_id": session_info["session_id"],
-        "session_date": session_info["session_date"],
-        "location": session_info["location"],
-        "flg_game": session_info["flg_game"],
+    return "Baja"
 
-        # Player
-        "player_id": session_info["player_id"],
-        "name": session_info["name"],
-        "surname": session_info["surname"],
-        "dorsal": session_info["dorsal"],
 
-        # HR
-        "avg_hr": avg_hr,
-        "max_hr": max_hr,
+def calcular_carga_cardiovascular(metrics):
 
-        # GPS
-        "total_distance": total_distance,
-        "max_speed": max_speed,
-        "avg_speed": avg_speed,
+    zones = metrics["hr_zones"]
 
-        # Sprint
-        "sprint_distance": sprint_distance,
-        "sprint_count": sprint_count,
+    trimp = (
+        zones["z1"] * 1
+        +
+        zones["z2"] * 2
+        +
+        zones["z3"] * 3
+        +
+        zones["z4"] * 4
+        +
+        zones["z5"] * 5
+    )
 
-        # Zones
-        "hr_zones": hr_zones,
+    return round(trimp, 1)
 
-        # Load
-        "player_load": player_load,
 
-        # Samples
-        "gps_samples": 0 if gps_df is None else len(gps_df),
-        "hr_samples": 0 if hr_df is None else len(hr_df)
-    }
+def generar_resumen(
+    metrics,
+    intensidad,
+    fatiga,
+    carga_cardio
+):
 
-    return metrics
+    texto = f"""
+### Resumen automático
+
+La sesión de **{metrics['name']} {metrics['surname']}**
+presentó una intensidad **{intensidad.lower()}**.
+
+- FC media: **{metrics['avg_hr']} bpm**
+- FC máxima: **{metrics['max_hr']} bpm**
+- Distancia total: **{metrics['total_distance']} m**
+- Velocidad máxima: **{metrics['max_speed']} km/h**
+- Número de sprints: **{metrics['sprint_count']}**
+- Player Load estimado: **{metrics['player_load']}**
+- Carga cardiovascular: **{carga_cardio}**
+
+El análisis detecta un nivel de fatiga
+**{fatiga.lower()}**.
+"""
+
+    # Intensidad
+    if intensidad == "Muy alta":
+
+        texto += """
+
+La jugadora estuvo expuesta a una carga
+cardiovascular elevada durante gran parte
+de la sesión.
+"""
+
+    # Fatiga
+    if fatiga == "Alta":
+
+        texto += """
+
+Se detecta posible fatiga neuromuscular
+o disminución de rendimiento físico.
+"""
+
+    # Sprint
+    if metrics["sprint_count"] > 20:
+
+        texto += """
+
+La sesión incluyó un volumen elevado
+de acciones de alta intensidad.
+"""
+
+    return texto
+
+
+def generar_recomendacion(
+    intensidad,
+    fatiga
+):
+
+    if (
+        intensidad == "Muy alta"
+        and fatiga == "Alta"
+    ):
+
+        return """
+- Recomendada sesión regenerativa
+- Controlar carga próximas 48h
+- Vigilar recuperación y sueño
+- Seguimiento wellness
+"""
+
+    elif intensidad in [
+        "Alta",
+        "Muy alta"
+    ]:
+
+        return """
+- Monitorizar recuperación
+- Controlar hidratación
+- Revisar carga semanal acumulada
+"""
+
+    elif fatiga == "Moderada":
+
+        return """
+- Posible fatiga acumulada
+- Vigilar próxima sesión
+"""
+
+    return """
+- Respuesta fisiológica adecuada
+- Recuperación estándar
+"""
+
+
+def generar_alertas(metrics):
+
+    alertas = []
+
+    if metrics["max_hr"] > 190:
+
+        alertas.append(
+            "⚠️ FC máxima muy elevada"
+        )
+
+    if metrics["max_speed"] > 28:
+
+        alertas.append(
+            "⚠️ Pico de velocidad muy alto"
+        )
+
+    if metrics["sprint_count"] > 30:
+
+        alertas.append(
+            "⚠️ Volumen elevado de sprints"
+        )
+
+    if metrics["player_load"] > 500:
+
+        alertas.append(
+            "⚠️ Player load elevado"
+        )
+
+    return alertas
+
+# =========================================================
+# HEADER
+# =========================================================
+
+st.title("🧠 IA Rendimiento")
+
+st.markdown("""
+Interpretación automática de datos
+físicos y fisiológicos.
+""")
+
+# =========================================================
+# SESSIONS
+# =========================================================
+
+sessions_df = get_sessions()
+
+if sessions_df.empty:
+
+    st.warning(
+        "No existen sesiones"
+    )
+
+    st.stop()
+
+selected_session = st.selectbox(
+    "Seleccionar sesión",
+    sessions_df["id"],
+    format_func=lambda x:
+        (
+            f"Sesión {x} | "
+            f"{sessions_df[sessions_df['id'] == x]['session_date'].values[0]}"
+        )
+)
+
+# =========================================================
+# PLAYERS
+# =========================================================
+
+players_df = get_players_by_session(
+    selected_session
+)
+
+if players_df.empty:
+
+    st.warning(
+        "No hay jugadoras asignadas"
+    )
+
+    st.stop()
+
+selected_player = st.selectbox(
+    "Seleccionar jugadora",
+    players_df["id"],
+    format_func=lambda x:
+        (
+            f"{players_df[players_df['id'] == x]['surname'].values[0]}, "
+            f"{players_df[players_df['id'] == x]['name'].values[0]}"
+        )
+)
+
+# =========================================================
+# BUILD METRICS
+# =========================================================
+
+metrics = build_player_session_metrics(
+    selected_session,
+    selected_player
+)
+
+if metrics is None:
+
+    st.error(
+        "No hay métricas disponibles"
+    )
+
+    st.stop()
+
+# =========================================================
+# PLAYER PROFILE
+# =========================================================
+
+hr_profile = get_player_hr_profile(
+    selected_player
+)
+
+# =========================================================
+# IA
+# =========================================================
+
+intensity_score = calcular_intensidad(
+    metrics
+)
+
+intensidad = clasificar_intensidad(
+    intensity_score
+)
+
+fatiga = detectar_fatiga(
+    metrics,
+    hr_profile
+)
+
+carga_cardio = calcular_carga_cardiovascular(
+    metrics
+)
+
+resumen = generar_resumen(
+    metrics,
+    intensidad,
+    fatiga,
+    carga_cardio
+)
+
+recomendacion = generar_recomendacion(
+    intensidad,
+    fatiga
+)
+
+alertas = generar_alertas(
+    metrics
+)
+
+# =========================================================
+# TOP METRICS
+# =========================================================
+
+c1, c2, c3, c4 = st.columns(4)
+
+c1.metric(
+    "Intensidad",
+    intensidad,
+    intensity_score
+)
+
+c2.metric(
+    "Fatiga",
+    fatiga
+)
+
+c3.metric(
+    "Carga cardio",
+    carga_cardio
+)
+
+c4.metric(
+    "Player Load",
+    metrics["player_load"]
+)
+
+# =========================================================
+# ALERTS
+# =========================================================
+
+if len(alertas) > 0:
+
+    st.subheader("🚨 Alertas")
+
+    for alerta in alertas:
+
+        st.warning(alerta)
+
+# =========================================================
+# SUMMARY
+# =========================================================
+
+st.subheader("📋 Resumen IA")
+
+st.markdown(resumen)
+
+# =========================================================
+# RECOMMENDATION
+# =========================================================
+
+st.subheader("✅ Recomendación")
+
+st.success(recomendacion)
+
+# =========================================================
+# HR ZONES
+# =========================================================
+
+st.subheader("❤️ Zonas FC")
+
+zones_df = pd.DataFrame({
+
+    "Zona": list(
+        metrics["hr_zones"].keys()
+    ),
+
+    "Tiempo": list(
+        metrics["hr_zones"].values()
+    )
+})
+
+st.bar_chart(
+    zones_df.set_index("Zona")
+)
+
+# =========================================================
+# RAW DATA
+# =========================================================
+
+with st.expander(
+    "Ver métricas completas"
+):
+
+    st.json(metrics)
+
+# =========================================================
+# FUTURE
+# =========================================================
+
+st.divider()
+
+st.subheader(
+    "🚀 Evolución futura"
+)
+
+st.markdown("""
+Próximos módulos IA:
+
+- Riesgo lesión
+- ACWR
+- Readiness score
+- Comparativa por posición
+- Fatiga acumulada
+- Análisis táctico
+- Heatmaps inteligentes
+- Predicción de rendimiento
+- IA conversacional para staff técnico
+""")

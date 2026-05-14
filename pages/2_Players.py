@@ -5,9 +5,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 from matplotlib.patches import (
-    Rectangle,
-    Circle,
-    Arc
+    Rectangle
 )
 
 from database.player_repository import (
@@ -16,6 +14,10 @@ from database.player_repository import (
 
 from database.db import (
     get_connection
+)
+
+from metrics.player_profile import (
+    get_player_hr_profile
 )
 
 # =========================
@@ -129,6 +131,14 @@ suunto_df = pd.read_sql_query(
 )
 
 # =========================
+# PLAYER HR PROFILE
+# =========================
+
+profile = get_player_hr_profile(
+    player_id
+)
+
+# =========================
 # HISTORICAL METRICS
 # =========================
 
@@ -187,16 +197,35 @@ historical_hr_max = None
 historical_hr_mean = None
 historical_speed_max = None
 
-if len(all_hr) > 0:
+# =========================
+# HR PROFILE
+# =========================
+
+if profile is not None:
 
     historical_hr_max = int(
-        max(all_hr)
+        profile["hr_max"]
     )
+
+    z1 = profile["zones"]["z1"]
+    z2 = profile["zones"]["z2"]
+    z3 = profile["zones"]["z3"]
+    z4 = profile["zones"]["z4"]
+
+# =========================
+# HR MEAN
+# =========================
+
+if len(all_hr) > 0:
 
     historical_hr_mean = round(
         sum(all_hr) / len(all_hr),
         1
     )
+
+# =========================
+# SPEED MAX
+# =========================
 
 if len(all_speed) > 0:
 
@@ -278,16 +307,11 @@ else:
 # ZONES
 # =========================
 
-if historical_hr_max is not None:
+if profile is not None:
 
     st.subheader(
         "Tiempo en zonas"
     )
-
-    z1 = historical_hr_max * 0.60
-    z2 = historical_hr_max * 0.70
-    z3 = historical_hr_max * 0.80
-    z4 = historical_hr_max * 0.90
 
     zones = {
         "Z1": 0,
@@ -560,21 +584,6 @@ session_df = pd.read_sql_query(
     conn
 )
 
-# =========================
-# LOAD TRAINING SESSION
-# =========================
-
-training_query = f"""
-SELECT *
-FROM training_sessions
-WHERE id = {selected_session_id}
-"""
-
-training_df = pd.read_sql_query(
-    training_query,
-    conn
-)
-
 conn.close()
 
 # =========================
@@ -635,13 +644,6 @@ session_df["minutes"] = (
 # =========================
 # HISTORICAL ZONES
 # =========================
-
-hr_max = historical_hr_max
-
-z1 = hr_max * 0.60
-z2 = hr_max * 0.70
-z3 = hr_max * 0.80
-z4 = hr_max * 0.90
 
 zone_limits = [
     z1,

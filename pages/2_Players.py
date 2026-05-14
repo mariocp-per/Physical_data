@@ -457,11 +457,16 @@ if sessions_df.empty:
 # CLEAN DATES
 # =========================
 
+sessions_df["session_date"] = (
+    sessions_df["session_date"]
+    .astype(str)
+    .str.replace("+00:00", "", regex=False)
+)
+
 sessions_df["session_date"] = pd.to_datetime(
     sessions_df["session_date"],
-    errors="coerce",
-    utc=True
-).dt.tz_localize(None)
+    errors="coerce"
+)
 
 sessions_df["label"] = (
     sessions_df["device"]

@@ -366,45 +366,57 @@ conn = get_connection()
 sessions_query = """
 SELECT
     da.session_id,
+    da.player_id,
     da.device_type as device,
     MAX(c.timestamp) as session_date
 FROM device_assignments da
 LEFT JOIN coros_data c
     ON da.session_id = c.session_id
     AND da.player_id = c.player_id
-WHERE da.player_id = ?
+WHERE da.player_id = 3
 AND da.device_type = 'COROS'
-GROUP BY da.session_id, da.device_type
+GROUP BY
+    da.session_id,
+    da.player_id,
+    da.device_type
 
 UNION ALL
 
 SELECT
     da.session_id,
+    da.player_id,
     da.device_type as device,
     MAX(m.timestamp) as session_date
 FROM device_assignments da
 LEFT JOIN myzone_data m
     ON da.session_id = m.session_id
     AND da.player_id = m.player_id
-WHERE da.player_id = ?
+WHERE da.player_id = 3
 AND da.device_type = 'MYZONE'
-GROUP BY da.session_id, da.device_type
+GROUP BY
+    da.session_id,
+    da.player_id,
+    da.device_type
 
 UNION ALL
 
 SELECT
     da.session_id,
+    da.player_id,
     da.device_type as device,
     MAX(s.timestamp) as session_date
 FROM device_assignments da
 LEFT JOIN suunto_data s
     ON da.session_id = s.session_id
     AND da.player_id = s.player_id
-WHERE da.player_id = ?
+WHERE da.player_id = 3
 AND da.device_type = 'SUUNTO'
-GROUP BY da.session_id, da.device_type
+GROUP BY
+    da.session_id,
+    da.player_id,
+    da.device_type
 
-ORDER BY session_date DESC
+ORDER BY session_date DESC;
 """
 
 sessions_df = pd.read_sql_query(

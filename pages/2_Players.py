@@ -459,9 +459,18 @@ if sessions_df.empty:
 
 sessions_df["session_date"] = pd.to_datetime(
     sessions_df["session_date"],
-    errors="coerce"
-)
+    errors="coerce",
+    utc=True
+).dt.tz_localize(None)
 
+sessions_df["label"] = (
+    sessions_df["device"]
+    + " | Sesión "
+    + sessions_df["session_id"].astype(str)
+    + " | "
+    + sessions_df["session_date"]
+        .dt.strftime("%d/%m/%Y %H:%M")
+)   
 valid_dates = sessions_df[
     sessions_df["session_date"].notna()
 ].copy()

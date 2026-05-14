@@ -273,12 +273,6 @@ if historical_hr_max is not None:
         total_sessions
     )
 
-else:
-
-    st.info(
-        "No hay datos monitorizados"
-    )
-
 # =========================
 # ZONES
 # =========================
@@ -386,94 +380,78 @@ st.header(
 
 conn = get_connection()
 
-try:
+sessions_query = """
+SELECT *
+FROM (
 
-    sessions_query = """
-    SELECT *
-    FROM (
+    SELECT
+        da.session_id as session_id,
+        da.player_id as player_id,
+        da.device_type as device,
+        MAX(c.timestamp) as session_date
+    FROM device_assignments da
+    LEFT JOIN coros_data c
+        ON da.session_id = c.session_id
+        AND da.player_id = c.player_id
+    WHERE da.player_id = ?
+    AND da.device_type = 'COROS'
+    GROUP BY
+        da.session_id,
+        da.player_id,
+        da.device_type
 
-        SELECT
-            da.session_id as session_id,
-            da.player_id as player_id,
-            da.device_type as device,
-            MAX(c.timestamp) as session_date
-        FROM device_assignments da
-        LEFT JOIN coros_data c
-            ON da.session_id = c.session_id
-            AND da.player_id = c.player_id
-        WHERE da.player_id = ?
-        AND da.device_type = 'COROS'
-        GROUP BY
-            da.session_id,
-            da.player_id,
-            da.device_type
+    UNION ALL
 
-        UNION ALL
+    SELECT
+        da.session_id as session_id,
+        da.player_id as player_id,
+        da.device_type as device,
+        MAX(m.timestamp) as session_date
+    FROM device_assignments da
+    LEFT JOIN myzone_data m
+        ON da.session_id = m.session_id
+        AND da.player_id = m.player_id
+    WHERE da.player_id = ?
+    AND da.device_type = 'MYZONE'
+    GROUP BY
+        da.session_id,
+        da.player_id,
+        da.device_type
 
-        SELECT
-            da.session_id as session_id,
-            da.player_id as player_id,
-            da.device_type as device,
-            MAX(m.timestamp) as session_date
-        FROM device_assignments da
-        LEFT JOIN myzone_data m
-            ON da.session_id = m.session_id
-            AND da.player_id = m.player_id
-        WHERE da.player_id = ?
-        AND da.device_type = 'MYZONE'
-        GROUP BY
-            da.session_id,
-            da.player_id,
-            da.device_type
+    UNION ALL
 
-        UNION ALL
+    SELECT
+        da.session_id as session_id,
+        da.player_id as player_id,
+        da.device_type as device,
+        MAX(s.timestamp) as session_date
+    FROM device_assignments da
+    LEFT JOIN suunto_data s
+        ON da.session_id = s.session_id
+        AND da.player_id = s.player_id
+    WHERE da.player_id = ?
+    AND da.device_type = 'SUUNTO'
+    GROUP BY
+        da.session_id,
+        da.player_id,
+        da.device_type
 
-        SELECT
-            da.session_id as session_id,
-            da.player_id as player_id,
-            da.device_type as device,
-            MAX(s.timestamp) as session_date
-        FROM device_assignments da
-        LEFT JOIN suunto_data s
-            ON da.session_id = s.session_id
-            AND da.player_id = s.player_id
-        WHERE da.player_id = ?
-        AND da.device_type = 'SUUNTO'
-        GROUP BY
-            da.session_id,
-            da.player_id,
-            da.device_type
+)
 
+ORDER BY session_date DESC
+"""
+
+sessions_df = pd.read_sql_query(
+    sessions_query,
+    conn,
+    params=(
+        player_id,
+        player_id,
+        player_id
     )
-
-    ORDER BY session_date DESC
-    """
-
-    sessions_df = pd.read_sql_query(
-        sessions_query,
-        conn,
-        params=(
-            player_id,
-            player_id,
-            player_id
-        )
-    )
-
-except Exception as e:
-
-    st.error(
-        f"Error cargando sesiones: {e}"
-    )
-
-    conn.close()
-
-    st.stop()
+)
 
 conn.close()
-
-# =========================
-# NO SESSIONS
-# =========================
 
 if sessions_df.empty:
 
@@ -502,8 +480,15 @@ sessions_df = sessions_df.sort_values(
 )
 
 # =========================
-# LABELS
+# SESSION OPTIONS
 # =========================
+
+sessions_df["session_key"] = (
+    sessions_df["device"]
+    + "_"
+    + sessions_df["session_id"]
+        .astype(str)
+)
 
 sessions_df["label"] = (
     sessions_df["device"]
@@ -515,37 +500,37 @@ sessions_df["label"] = (
         .dt.strftime("%d/%m %H:%M")
 )
 
-# =========================
-# DEFAULT LAST 2
-# =========================
+session_options = {
+    row["label"]: row["session_key"]
+    for _, row in sessions_df.iterrows()
+}
 
-default_sessions = (
-    sessions_df["label"]
-    .head(2)
-    .tolist()
-)
+default_sessions = list(
+    session_options.keys()
+)[:2]
 
 selected_labels = st.multiselect(
     "Seleccionar sesiones",
-    sessions_df["label"].tolist(),
+    list(session_options.keys()),
     default=default_sessions
 )
 
+selected_keys = [
+    session_options[label]
+    for label in selected_labels
+]
+
 selected_sessions_df = sessions_df[
-    sessions_df["label"]
-    .isin(selected_labels)
+    sessions_df["session_key"]
+    .isin(selected_keys)
 ]
 
 if selected_sessions_df.empty:
 
-    st.info(
-        "Selecciona al menos una sesión"
-    )
-
     st.stop()
 
 # =========================
-# LOAD TIMELINE DATA
+# LOAD TIMELINES
 # =========================
 
 conn = get_connection()
@@ -589,6 +574,13 @@ if len(selected_coros) > 0:
 
     coros_timeline["device"] = "COROS"
 
+    coros_timeline["session_key"] = (
+        coros_timeline["device"]
+        + "_"
+        + coros_timeline["session_id"]
+            .astype(str)
+    )
+
 # MYZONE
 
 myzone_timeline = pd.DataFrame()
@@ -625,6 +617,13 @@ if len(selected_myzone) > 0:
     )
 
     myzone_timeline["device"] = "MYZONE"
+
+    myzone_timeline["session_key"] = (
+        myzone_timeline["device"]
+        + "_"
+        + myzone_timeline["session_id"]
+            .astype(str)
+    )
 
 # SUUNTO
 
@@ -664,6 +663,13 @@ if len(selected_suunto) > 0:
     )
 
     suunto_timeline["device"] = "SUUNTO"
+
+    suunto_timeline["session_key"] = (
+        suunto_timeline["device"]
+        + "_"
+        + suunto_timeline["session_id"]
+            .astype(str)
+    )
 
 conn.close()
 
@@ -732,16 +738,11 @@ for idx, (_, row) in enumerate(
 
     device = row["device"]
 
+    session_key = f"{device}_{session}"
+
     session_df = timeline_df[
-        (
-            timeline_df["session_id"]
-            == session
-        )
-        &
-        (
-            timeline_df["device"]
-            == device
-        )
+        timeline_df["session_key"]
+        == session_key
     ].copy()
 
     if session_df.empty:
@@ -819,16 +820,11 @@ if (
 
         device = row["device"]
 
+        session_key = f"{device}_{session}"
+
         session_df = speed_df[
-            (
-                speed_df["session_id"]
-                == session
-            )
-            &
-            (
-                speed_df["device"]
-                == device
-            )
+            speed_df["session_key"]
+            == session_key
         ].copy()
 
         if session_df.empty:
@@ -910,16 +906,11 @@ if (
 
         device = row["device"]
 
+        session_key = f"{device}_{session}"
+
         session_df = distance_df[
-            (
-                distance_df["session_id"]
-                == session
-            )
-            &
-            (
-                distance_df["device"]
-                == device
-            )
+            distance_df["session_key"]
+            == session_key
         ].copy()
 
         if session_df.empty:

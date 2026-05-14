@@ -185,12 +185,18 @@ def clean_tracking_data(df):
     if df.empty:
         return df
 
-    # REMOVE OUTSIDE COURT
+    # REMOVE NULLS
+    df = df.dropna(
+        subset=["x", "y"]
+    ).copy()
+
+    if df.empty:
+        return df
+
+    # REMOVE OUTSIDE LIMITS
     df = df[
         (df["x"] >= 0) &
-        (df["x"] <= 28) &
-        (df["y"] >= 0) &
-        (df["y"] <= 15)
+        (df["y"] >= 0)
     ].copy()
 
     if len(df) < 10:
@@ -210,33 +216,39 @@ def clean_tracking_data(df):
         (df["y"] <= y_max)
     ].copy()
 
-    # AVOID DIVISION BY ZERO
-    if df["x"].max() != df["x"].min():
+    if df.empty:
+        return df
+
+    # RESCALE X
+    x_range = (
+        df["x"].max() -
+        df["x"].min()
+    )
+
+    if x_range > 0:
 
         df["x"] = (
             (
                 df["x"] -
                 df["x"].min()
             )
-            /
-            (
-                df["x"].max() -
-                df["x"].min()
-            )
+            / x_range
         ) * 28
 
-    if df["y"].max() != df["y"].min():
+    # RESCALE Y
+    y_range = (
+        df["y"].max() -
+        df["y"].min()
+    )
+
+    if y_range > 0:
 
         df["y"] = (
             (
                 df["y"] -
                 df["y"].min()
             )
-            /
-            (
-                df["y"].max() -
-                df["y"].min()
-            )
+            / y_range
         ) * 15
 
     return df
@@ -373,7 +385,7 @@ if tracking_df.empty:
 
 
 # =========================
-# HEATMAPS BY PLAYER
+# HEATMAPS
 # =========================
 
 for _, player in players_df.iterrows():
@@ -391,145 +403,153 @@ for _, player in players_df.iterrows():
     if player_tracking.empty:
         continue
 
-    # CLEAN DATA
-    player_tracking = clean_tracking_data(
-        player_tracking
-    )
-
-    if player_tracking.empty:
-        continue
-
     st.divider()
 
-    # SOURCE INFO
-    sources = (
-        player_tracking["source"]
-        .unique()
-        .tolist()
-    )
-
-    source_text = " + ".join(sources)
-
-    st.subheader(
-        f"{player_name}"
-    )
-
-    st.caption(
-        f"Fuente GPS: {source_text}"
+    st.header(
+        player_name
     )
 
     # =========================
-    # TRAINING HEATMAP
+    # BY GPS SOURCE
     # =========================
 
-    if session_row["flg_game"] == 0:
+    for source in player_tracking["source"].unique():
 
-        fig, ax = plt.subplots(
-            figsize=(10, 5)
+        source_df = player_tracking[
+            player_tracking["source"] == source
+        ].copy()
+
+        if source_df.empty:
+            continue
+
+        # CLEAN SOURCE DATA
+        source_df = clean_tracking_data(
+            source_df
         )
 
-        hb = ax.hexbin(
-            player_tracking["x"],
-            player_tracking["y"],
-            gridsize=20,
-            extent=(0, 28, 0, 15),
-            cmap="Reds",
-            mincnt=1
+        if source_df.empty:
+            continue
+
+        st.subheader(
+            f"📡 {source}"
         )
 
-        draw_court(ax)
-
-        cb = fig.colorbar(
-            hb,
-            ax=ax
+        st.caption(
+            f"Registros: {len(source_df)}"
         )
 
-        cb.set_label(
-            "Densidad"
-        )
+        # =========================
+        # TRAINING
+        # =========================
 
-        st.pyplot(fig)
+        if session_row["flg_game"] == 0:
 
-    # =========================
-    # GAME HEATMAPS
-    # =========================
-
-    else:
-
-        player_tracking = player_tracking.sort_values(
-            by="timestamp"
-        )
-
-        mid = len(player_tracking) // 2
-
-        first_half = player_tracking.iloc[:mid]
-
-        second_half = player_tracking.iloc[mid:]
-
-        c1, c2 = st.columns(2)
-
-        # FIRST HALF
-        with c1:
-
-            st.markdown(
-                "### 1ª Parte"
+            fig, ax = plt.subplots(
+                figsize=(10, 5)
             )
 
-            fig1, ax1 = plt.subplots(
-                figsize=(8, 4)
-            )
-
-            hb1 = ax1.hexbin(
-                first_half["x"],
-                first_half["y"],
+            hb = ax.hexbin(
+                source_df["x"],
+                source_df["y"],
                 gridsize=20,
                 extent=(0, 28, 0, 15),
                 cmap="Reds",
                 mincnt=1
             )
 
-            draw_court(ax1)
+            draw_court(ax)
 
-            cb1 = fig1.colorbar(
-                hb1,
-                ax=ax1
+            cb = fig.colorbar(
+                hb,
+                ax=ax
             )
 
-            cb1.set_label(
+            cb.set_label(
                 "Densidad"
             )
 
-            st.pyplot(fig1)
+            st.pyplot(fig)
 
-        # SECOND HALF
-        with c2:
+        # =========================
+        # GAME
+        # =========================
 
-            st.markdown(
-                "### 2ª Parte"
+        else:
+
+            source_df = source_df.sort_values(
+                by="timestamp"
             )
 
-            fig2, ax2 = plt.subplots(
-                figsize=(8, 4)
-            )
+            mid = len(source_df) // 2
 
-            hb2 = ax2.hexbin(
-                second_half["x"],
-                second_half["y"],
-                gridsize=20,
-                extent=(0, 28, 0, 15),
-                cmap="Reds",
-                mincnt=1
-            )
+            first_half = source_df.iloc[:mid]
 
-            draw_court(ax2)
+            second_half = source_df.iloc[mid:]
 
-            cb2 = fig2.colorbar(
-                hb2,
-                ax=ax2
-            )
+            c1, c2 = st.columns(2)
 
-            cb2.set_label(
-                "Densidad"
-            )
+            # FIRST HALF
+            with c1:
 
-            st.pyplot(fig2)
+                st.markdown(
+                    "### 1ª Parte"
+                )
+
+                fig1, ax1 = plt.subplots(
+                    figsize=(8, 4)
+                )
+
+                hb1 = ax1.hexbin(
+                    first_half["x"],
+                    first_half["y"],
+                    gridsize=20,
+                    extent=(0, 28, 0, 15),
+                    cmap="Reds",
+                    mincnt=1
+                )
+
+                draw_court(ax1)
+
+                cb1 = fig1.colorbar(
+                    hb1,
+                    ax=ax1
+                )
+
+                cb1.set_label(
+                    "Densidad"
+                )
+
+                st.pyplot(fig1)
+
+            # SECOND HALF
+            with c2:
+
+                st.markdown(
+                    "### 2ª Parte"
+                )
+
+                fig2, ax2 = plt.subplots(
+                    figsize=(8, 4)
+                )
+
+                hb2 = ax2.hexbin(
+                    second_half["x"],
+                    second_half["y"],
+                    gridsize=20,
+                    extent=(0, 28, 0, 15),
+                    cmap="Reds",
+                    mincnt=1
+                )
+
+                draw_court(ax2)
+
+                cb2 = fig2.colorbar(
+                    hb2,
+                    ax=ax2
+                )
+
+                cb2.set_label(
+                    "Densidad"
+                )
+
+                st.pyplot(fig2)

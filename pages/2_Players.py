@@ -8,7 +8,9 @@ from database.player_repository import (
     get_players
 )
 
-from database.db import get_connection
+from database.db import (
+    get_connection
+)
 
 # =========================
 # PAGE CONFIG
@@ -29,7 +31,9 @@ players = get_players()
 
 if players.empty:
 
-    st.warning("No hay jugadoras")
+    st.warning(
+        "No hay jugadoras"
+    )
 
     st.stop()
 
@@ -38,7 +42,7 @@ if players.empty:
 # =========================
 
 player_options = {
-    f"{row['surname']}, {row['name']}": row['id']
+    f"{row['surname']}, {row['name']}": row["id"]
     for _, row in players.iterrows()
 }
 
@@ -59,7 +63,9 @@ player_row = players[
     players["id"] == player_id
 ].iloc[0]
 
-st.header("Información personal")
+st.header(
+    "Información personal"
+)
 
 c1, c2, c3, c4 = st.columns(4)
 
@@ -235,7 +241,9 @@ if not suunto_df.empty:
 # METRICS
 # =========================
 
-st.header("Métricas")
+st.header(
+    "Métricas"
+)
 
 if historical_hr_max is not None:
 
@@ -265,13 +273,21 @@ if historical_hr_max is not None:
         total_sessions
     )
 
+else:
+
+    st.info(
+        "No hay datos monitorizados"
+    )
+
 # =========================
 # ZONES
 # =========================
 
 if historical_hr_max is not None:
 
-    st.subheader("Tiempo en zonas")
+    st.subheader(
+        "Tiempo en zonas"
+    )
 
     z1 = historical_hr_max * 0.60
     z2 = historical_hr_max * 0.70
@@ -286,13 +302,18 @@ if historical_hr_max is not None:
         "Z5": 0
     }
 
-    def process_hr(df, sample_seconds):
+    def process_hr(
+        df,
+        sample_seconds
+    ):
 
         if df.empty:
 
             return
 
-        for hr in df["heart_rate"].dropna():
+        for hr in df[
+            "heart_rate"
+        ].dropna():
 
             if hr < z1:
 
@@ -359,80 +380,111 @@ if historical_hr_max is not None:
 # SESSION SELECTOR
 # =========================
 
-st.header("Comparación de sesiones")
+st.header(
+    "Comparación de sesiones"
+)
 
 conn = get_connection()
 
-sessions_query = """
-SELECT
-    da.session_id,
-    da.player_id,
-    da.device_type as device,
-    MAX(c.timestamp) as session_date
-FROM device_assignments da
-LEFT JOIN coros_data c
-    ON da.session_id = c.session_id
-    AND da.player_id = c.player_id
-WHERE da.player_id = 3
-AND da.device_type = 'COROS'
-GROUP BY
-    da.session_id,
-    da.player_id,
-    da.device_type
+try:
 
-UNION ALL
+    sessions_query = """
+    SELECT *
+    FROM (
 
-SELECT
-    da.session_id,
-    da.player_id,
-    da.device_type as device,
-    MAX(m.timestamp) as session_date
-FROM device_assignments da
-LEFT JOIN myzone_data m
-    ON da.session_id = m.session_id
-    AND da.player_id = m.player_id
-WHERE da.player_id = 3
-AND da.device_type = 'MYZONE'
-GROUP BY
-    da.session_id,
-    da.player_id,
-    da.device_type
+        SELECT
+            da.session_id as session_id,
+            da.player_id as player_id,
+            da.device_type as device,
+            MAX(c.timestamp) as session_date
+        FROM device_assignments da
+        LEFT JOIN coros_data c
+            ON da.session_id = c.session_id
+            AND da.player_id = c.player_id
+        WHERE da.player_id = ?
+        AND da.device_type = 'COROS'
+        GROUP BY
+            da.session_id,
+            da.player_id,
+            da.device_type
 
-UNION ALL
+        UNION ALL
 
-SELECT
-    da.session_id,
-    da.player_id,
-    da.device_type as device,
-    MAX(s.timestamp) as session_date
-FROM device_assignments da
-LEFT JOIN suunto_data s
-    ON da.session_id = s.session_id
-    AND da.player_id = s.player_id
-WHERE da.player_id = 3
-AND da.device_type = 'SUUNTO'
-GROUP BY
-    da.session_id,
-    da.player_id,
-    da.device_type
+        SELECT
+            da.session_id as session_id,
+            da.player_id as player_id,
+            da.device_type as device,
+            MAX(m.timestamp) as session_date
+        FROM device_assignments da
+        LEFT JOIN myzone_data m
+            ON da.session_id = m.session_id
+            AND da.player_id = m.player_id
+        WHERE da.player_id = ?
+        AND da.device_type = 'MYZONE'
+        GROUP BY
+            da.session_id,
+            da.player_id,
+            da.device_type
 
-ORDER BY session_date DESC;
-"""
+        UNION ALL
 
-sessions_df = pd.read_sql_query(
-    sessions_query,
-    conn,
-    params=(
-        player_id,
-        player_id,
-        player_id
+        SELECT
+            da.session_id as session_id,
+            da.player_id as player_id,
+            da.device_type as device,
+            MAX(s.timestamp) as session_date
+        FROM device_assignments da
+        LEFT JOIN suunto_data s
+            ON da.session_id = s.session_id
+            AND da.player_id = s.player_id
+        WHERE da.player_id = ?
+        AND da.device_type = 'SUUNTO'
+        GROUP BY
+            da.session_id,
+            da.player_id,
+            da.device_type
+
     )
-)
+
+    ORDER BY session_date DESC
+    """
+
+    sessions_df = pd.read_sql_query(
+        sessions_query,
+        conn,
+        params=(
+            player_id,
+            player_id,
+            player_id
+        )
+    )
+
+except Exception as e:
+
+    st.error(
+        f"Error cargando sesiones: {e}"
+    )
+
+    conn.close()
+
+    st.stop()
 
 conn.close()
 
 # =========================
-# DATES
+# NO SESSIONS
+# =========================
+
+if sessions_df.empty:
+
+    st.info(
+        "La jugadora no tiene sesiones"
+    )
+
+    st.stop()
+
+# =========================
+# CLEAN DATES
 # =========================
 
 sessions_df["session_date"] = pd.to_datetime(
@@ -456,7 +508,8 @@ sessions_df = sessions_df.sort_values(
 sessions_df["label"] = (
     sessions_df["device"]
     + " | "
-    + sessions_df["session_id"].astype(str)
+    + sessions_df["session_id"]
+        .astype(str)
     + " | "
     + sessions_df["session_date"]
         .dt.strftime("%d/%m %H:%M")
@@ -484,6 +537,10 @@ selected_sessions_df = sessions_df[
 ]
 
 if selected_sessions_df.empty:
+
+    st.info(
+        "Selecciona al menos una sesión"
+    )
 
     st.stop()
 
@@ -611,7 +668,7 @@ if len(selected_suunto) > 0:
 conn.close()
 
 # =========================
-# COMBINE DATA
+# COMBINE TIMELINES
 # =========================
 
 timeline_df = pd.concat(
@@ -677,11 +734,13 @@ for idx, (_, row) in enumerate(
 
     session_df = timeline_df[
         (
-            timeline_df["session_id"] == session
+            timeline_df["session_id"]
+            == session
         )
         &
         (
-            timeline_df["device"] == device
+            timeline_df["device"]
+            == device
         )
     ].copy()
 
@@ -698,7 +757,8 @@ for idx, (_, row) in enumerate(
     ].min()
 
     session_df["minutes"] = (
-        session_df["timestamp"] - start_time
+        session_df["timestamp"]
+        - start_time
     ).dt.total_seconds() / 60
 
     ax_hr.plot(
@@ -711,9 +771,16 @@ for idx, (_, row) in enumerate(
         ]
     )
 
-ax_hr.set_xlabel("Minutos")
-ax_hr.set_ylabel("FC")
+ax_hr.set_xlabel(
+    "Minutos"
+)
+
+ax_hr.set_ylabel(
+    "FC"
+)
+
 ax_hr.grid(True)
+
 ax_hr.legend()
 
 st.pyplot(fig_hr)
@@ -724,7 +791,10 @@ st.pyplot(fig_hr)
 
 speed_df = timeline_df[
     timeline_df["device"].isin(
-        ["COROS", "SUUNTO"]
+        [
+            "COROS",
+            "SUUNTO"
+        ]
     )
 ].copy()
 
@@ -751,11 +821,13 @@ if (
 
         session_df = speed_df[
             (
-                speed_df["session_id"] == session
+                speed_df["session_id"]
+                == session
             )
             &
             (
-                speed_df["device"] == device
+                speed_df["device"]
+                == device
             )
         ].copy()
 
@@ -772,7 +844,8 @@ if (
         ].min()
 
         session_df["minutes"] = (
-            session_df["timestamp"] - start_time
+            session_df["timestamp"]
+            - start_time
         ).dt.total_seconds() / 60
 
         session_df["speed_kmh"] = (
@@ -789,9 +862,16 @@ if (
             ]
         )
 
-    ax_speed.set_xlabel("Minutos")
-    ax_speed.set_ylabel("km/h")
+    ax_speed.set_xlabel(
+        "Minutos"
+    )
+
+    ax_speed.set_ylabel(
+        "km/h"
+    )
+
     ax_speed.grid(True)
+
     ax_speed.legend()
 
     st.pyplot(fig_speed)
@@ -802,7 +882,10 @@ if (
 
 distance_df = timeline_df[
     timeline_df["device"].isin(
-        ["COROS", "SUUNTO"]
+        [
+            "COROS",
+            "SUUNTO"
+        ]
     )
 ].copy()
 
@@ -829,11 +912,13 @@ if (
 
         session_df = distance_df[
             (
-                distance_df["session_id"] == session
+                distance_df["session_id"]
+                == session
             )
             &
             (
-                distance_df["device"] == device
+                distance_df["device"]
+                == device
             )
         ].copy()
 
@@ -850,7 +935,8 @@ if (
         ].min()
 
         session_df["minutes"] = (
-            session_df["timestamp"] - start_time
+            session_df["timestamp"]
+            - start_time
         ).dt.total_seconds() / 60
 
         session_df["distance_km"] = (
@@ -867,9 +953,16 @@ if (
             ]
         )
 
-    ax_dist.set_xlabel("Minutos")
-    ax_dist.set_ylabel("Kilómetros")
+    ax_dist.set_xlabel(
+        "Minutos"
+    )
+
+    ax_dist.set_ylabel(
+        "Kilómetros"
+    )
+
     ax_dist.grid(True)
+
     ax_dist.legend()
 
     st.pyplot(fig_dist)

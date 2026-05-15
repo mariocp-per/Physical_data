@@ -369,19 +369,59 @@ if profile is not None:
         60
     )
 
+    # =========================
+    # TOTAL TIME
+    # =========================
+
+    total_seconds = sum(
+        zones.values()
+    )
+
+    # =========================
+    # ZONES DF
+    # =========================
+
     zones_df = pd.DataFrame({
-        "Zona": list(zones.keys()),
-        "Minutos": [
-            round(v / 60, 1)
+
+        "Zona": list(
+            zones.keys()
+        ),
+
+        "% Minutos": [
+
+            round(
+                (
+                    v / total_seconds
+                ) * 100,
+                1
+            )
+
+            if total_seconds > 0
+            else 0
+
             for v in zones.values()
         ]
     })
 
     ranges = {
+
         "Z1": f"< {int(z1)}",
-        "Z2": f"{int(z1)} - {int(z2)}",
-        "Z3": f"{int(z2)} - {int(z3)}",
-        "Z4": f"{int(z3)} - {int(z4)}",
+
+        "Z2": (
+            f"{int(z1)} - "
+            f"{int(z2)}"
+        ),
+
+        "Z3": (
+            f"{int(z2)} - "
+            f"{int(z3)}"
+        ),
+
+        "Z4": (
+            f"{int(z3)} - "
+            f"{int(z4)}"
+        ),
+
         "Z5": f"> {int(z4)}"
     }
 
@@ -390,669 +430,15 @@ if profile is not None:
         .map(ranges)
     )
 
+    zones_df = zones_df[
+        [
+            "Zona",
+            "Rango BPM",
+            "% Minutos"
+        ]
+    ]
+
     st.dataframe(
         zones_df,
         use_container_width=True
     )
-
-# =========================
-# SESSION SELECTOR
-# =========================
-
-st.header(
-    "Sesión"
-)
-
-sessions_query = f"""
-SELECT *
-FROM (
-
-    SELECT
-        da.session_id as session_id,
-        da.device_type as device,
-        MAX(c.timestamp) as session_date
-    FROM device_assignments da
-    LEFT JOIN coros_data c
-        ON da.session_id = c.session_id
-        AND da.player_id = c.player_id
-    WHERE da.player_id = {player_id}
-    AND da.device_type = 'COROS'
-    GROUP BY
-        da.session_id,
-        da.device_type
-
-    UNION ALL
-
-    SELECT
-        da.session_id as session_id,
-        da.device_type as device,
-        MAX(m.timestamp) as session_date
-    FROM device_assignments da
-    LEFT JOIN myzone_data m
-        ON da.session_id = m.session_id
-        AND da.player_id = m.player_id
-    WHERE da.player_id = {player_id}
-    AND da.device_type = 'MYZONE'
-    GROUP BY
-        da.session_id,
-        da.device_type
-
-    UNION ALL
-
-    SELECT
-        da.session_id as session_id,
-        da.device_type as device,
-        MAX(s.timestamp) as session_date
-    FROM device_assignments da
-    LEFT JOIN suunto_data s
-        ON da.session_id = s.session_id
-        AND da.player_id = s.player_id
-    WHERE da.player_id = {player_id}
-    AND da.device_type = 'SUUNTO'
-    GROUP BY
-        da.session_id,
-        da.device_type
-
-)
-
-ORDER BY session_date DESC
-"""
-
-sessions_df = pd.read_sql_query(
-    sessions_query,
-    conn
-)
-
-if sessions_df.empty:
-
-    st.info(
-        "La jugadora no tiene sesiones"
-    )
-
-    conn.close()
-
-    st.stop()
-
-# =========================
-# DATES
-# =========================
-
-sessions_df["session_date"] = (
-    sessions_df["session_date"]
-    .astype(str)
-    .str.replace(
-        "+00:00",
-        "",
-        regex=False
-    )
-)
-
-sessions_df["session_date"] = pd.to_datetime(
-    sessions_df["session_date"],
-    errors="coerce"
-)
-
-sessions_df = sessions_df[
-    sessions_df["session_date"].notna()
-].copy()
-
-sessions_df = sessions_df.sort_values(
-    "session_date",
-    ascending=False
-)
-
-# =========================
-# LABELS
-# =========================
-
-sessions_df["label"] = (
-    sessions_df["device"]
-    + " | Sesión "
-    + sessions_df["session_id"]
-        .astype(str)
-    + " | "
-    + sessions_df["session_date"]
-        .dt.strftime("%d/%m/%Y %H:%M")
-)
-
-# =========================
-# SESSION OPTIONS
-# =========================
-
-session_options = {
-    row["label"]: {
-        "session_id": row["session_id"],
-        "device": row["device"]
-    }
-    for _, row in sessions_df.iterrows()
-}
-
-selected_label = st.selectbox(
-    "Seleccionar sesión",
-    list(session_options.keys()),
-    index=0
-)
-
-selected_session = session_options[
-    selected_label
-]
-
-selected_session_id = (
-    selected_session["session_id"]
-)
-
-selected_device = (
-    selected_session["device"]
-)
-
-# =========================
-# LOAD SESSION DATA
-# =========================
-
-if selected_device == "COROS":
-
-    session_query = f"""
-    SELECT *
-    FROM coros_data
-    WHERE player_id = {player_id}
-    AND session_id = {selected_session_id}
-    ORDER BY timestamp
-    """
-
-elif selected_device == "MYZONE":
-
-    session_query = f"""
-    SELECT *
-    FROM myzone_data
-    WHERE player_id = {player_id}
-    AND session_id = {selected_session_id}
-    ORDER BY timestamp
-    """
-
-else:
-
-    session_query = f"""
-    SELECT *
-    FROM suunto_data
-    WHERE player_id = {player_id}
-    AND session_id = {selected_session_id}
-    ORDER BY timestamp
-    """
-
-session_df = pd.read_sql_query(
-    session_query,
-    conn
-)
-
-conn.close()
-
-# =========================
-# VALIDATION
-# =========================
-
-if session_df.empty:
-
-    st.warning(
-        "No hay datos para la sesión"
-    )
-
-    st.stop()
-
-# =========================
-# HR TIMELINE
-# =========================
-
-st.header(
-    "Frecuencia cardíaca"
-)
-
-session_df["timestamp"] = (
-    pd.to_datetime(
-        session_df["timestamp"],
-        errors="coerce"
-    )
-)
-
-session_df = session_df.dropna(
-    subset=["timestamp"]
-)
-
-session_df = session_df.sort_values(
-    "timestamp"
-)
-
-try:
-
-    session_df["timestamp"] = (
-        session_df["timestamp"]
-        .dt.tz_localize(None)
-    )
-
-except:
-
-    pass
-
-start_time = session_df[
-    "timestamp"
-].min()
-
-session_df["minutes"] = (
-    session_df["timestamp"]
-    - start_time
-).dt.total_seconds() / 60
-
-# =========================
-# HISTORICAL ZONES
-# =========================
-
-zone_limits = [
-    z1,
-    z2,
-    z3,
-    z4
-]
-
-# =========================
-# ZONE FUNCTION
-# =========================
-
-def get_zone_color(
-    hr,
-    z1,
-    z2,
-    z3,
-    z4
-):
-
-    if hr < z1:
-
-        return "darkgreen"
-
-    elif hr < z2:
-
-        return "blue"
-
-    elif hr < z3:
-
-        return "yellow"
-
-    elif hr < z4:
-
-        return "orange"
-
-    else:
-
-        return "red"
-
-# =========================
-# FIGURE
-# =========================
-
-fig, ax = plt.subplots(
-    figsize=(14, 4)
-)
-
-ax.set_facecolor(
-    "white"
-)
-
-# =========================
-# COROS / SUUNTO
-# =========================
-
-if selected_device in [
-    "COROS",
-    "SUUNTO"
-]:
-
-    colors = []
-
-    for hr in session_df[
-        "heart_rate"
-    ]:
-
-        colors.append(
-            get_zone_color(
-                hr,
-                z1,
-                z2,
-                z3,
-                z4
-            )
-        )
-
-    ax.scatter(
-        session_df["minutes"],
-        session_df["heart_rate"],
-        c=colors,
-        s=10,
-        alpha=0.9,
-        linewidths=0
-    )
-
-# =========================
-# MYZONE
-# =========================
-
-else:
-
-    session_df["minute_bin"] = (
-        session_df["minutes"]
-        .round()
-    )
-
-    myzone_minute = (
-        session_df
-        .groupby("minute_bin")
-        .agg({
-            "heart_rate": "mean"
-        })
-        .reset_index()
-    )
-
-    for i in range(
-        len(myzone_minute) - 1
-    ):
-
-        x1 = myzone_minute.iloc[i][
-            "minute_bin"
-        ]
-
-        x2 = myzone_minute.iloc[i + 1][
-            "minute_bin"
-        ]
-
-        y1 = myzone_minute.iloc[i][
-            "heart_rate"
-        ]
-
-        y2 = myzone_minute.iloc[i + 1][
-            "heart_rate"
-        ]
-
-        crossings = []
-
-        for limit in zone_limits:
-
-            if (
-                (y1 < limit and y2 > limit)
-                or
-                (y1 > limit and y2 < limit)
-            ):
-
-                ratio = (
-                    (limit - y1)
-                    /
-                    (y2 - y1)
-                )
-
-                cross_x = (
-                    x1
-                    +
-                    ratio * (x2 - x1)
-                )
-
-                crossings.append(
-                    (
-                        cross_x,
-                        limit
-                    )
-                )
-
-        points = [
-            (x1, y1)
-        ]
-
-        points.extend(
-            crossings
-        )
-
-        points.append(
-            (x2, y2)
-        )
-
-        points = sorted(
-            points,
-            key=lambda p: p[0]
-        )
-
-        for j in range(
-            len(points) - 1
-        ):
-
-            px1, py1 = points[j]
-
-            px2, py2 = points[j + 1]
-
-            mid_hr = (
-                py1 + py2
-            ) / 2
-
-            color = get_zone_color(
-                mid_hr,
-                z1,
-                z2,
-                z3,
-                z4
-            )
-
-            ax.plot(
-                [px1, px2],
-                [py1, py2],
-                color=color,
-                linewidth=4,
-                solid_capstyle="round"
-            )
-
-# =========================
-# AXIS
-# =========================
-
-ax.set_xlabel(
-    "Minutos"
-)
-
-ax.set_ylabel(
-    "FC"
-)
-
-ax.set_title(
-    (
-        f"Frecuencia cardíaca - "
-        f"{selected_device} - "
-        f"Sesión {selected_session_id}"
-    )
-)
-
-ax.grid(True)
-
-max_minutes = int(
-    session_df["minutes"].max()
-)
-
-ax.set_xticks(
-    range(
-        0,
-        max_minutes + 5,
-        5
-    )
-)
-
-st.pyplot(fig)
-
-# =========================
-# SPEED GRAPH
-# =========================
-
-if (
-    "speed" in session_df.columns
-):
-
-    speed_df = session_df.dropna(
-        subset=["speed"]
-    ).copy()
-
-    if not speed_df.empty:
-
-        st.header(
-            "Velocidad"
-        )
-
-        speed_df["speed_kmh"] = (
-            speed_df["speed"] * 3.6
-        )
-
-        fig_speed, ax_speed = plt.subplots(
-            figsize=(14, 4)
-        )
-
-        ax_speed.plot(
-            speed_df["minutes"],
-            speed_df["speed_kmh"],
-            linewidth=2
-        )
-
-        ax_speed.set_xlabel(
-            "Minutos"
-        )
-
-        ax_speed.set_ylabel(
-            "km/h"
-        )
-
-        ax_speed.grid(True)
-
-        st.pyplot(fig_speed)
-
-# =========================
-# DISTANCE GRAPH
-# =========================
-
-if (
-    "distance" in session_df.columns
-):
-
-    dist_df = session_df.dropna(
-        subset=["distance"]
-    ).copy()
-
-    if not dist_df.empty:
-
-        st.header(
-            "Distancia"
-        )
-
-        dist_df["distance_km"] = (
-            dist_df["distance"] / 1000
-        )
-
-        fig_dist, ax_dist = plt.subplots(
-            figsize=(14, 4)
-        )
-
-        ax_dist.plot(
-            dist_df["minutes"],
-            dist_df["distance_km"],
-            linewidth=2
-        )
-
-        ax_dist.set_xlabel(
-            "Minutos"
-        )
-
-        ax_dist.set_ylabel(
-            "Kilómetros"
-        )
-
-        ax_dist.grid(True)
-
-        st.pyplot(fig_dist)
-
-# =========================
-# HEATMAP
-# =========================
-
-if (
-    selected_device in [
-        "COROS",
-        "SUUNTO"
-    ]
-    and "x" in session_df.columns
-    and "y" in session_df.columns
-):
-
-    heatmap_df = session_df.dropna(
-        subset=["x", "y"]
-    ).copy()
-
-    if not heatmap_df.empty:
-
-        st.header(
-            "🔥 Heatmap"
-        )
-
-        heatmap_df = heatmap_df[
-            (heatmap_df["x"] >= 0)
-            &
-            (heatmap_df["x"] <= 28)
-            &
-            (heatmap_df["y"] >= 0)
-            &
-            (heatmap_df["y"] <= 15)
-        ].copy()
-
-        if not heatmap_df.empty:
-
-            fig_heat, ax_heat = plt.subplots(
-                figsize=(10, 5)
-            )
-
-            hb = ax_heat.hexbin(
-                heatmap_df["x"],
-                heatmap_df["y"],
-                gridsize=20,
-                extent=(0, 28, 0, 15),
-                cmap="Reds",
-                mincnt=1
-            )
-
-            outer = Rectangle(
-                (0, 0),
-                28,
-                15,
-                linewidth=2,
-                color="black",
-                fill=False
-            )
-
-            ax_heat.add_patch(
-                outer
-            )
-
-            ax_heat.set_xlim(
-                0,
-                28
-            )
-
-            ax_heat.set_ylim(
-                0,
-                15
-            )
-
-            ax_heat.set_aspect(
-                "equal"
-            )
-
-            ax_heat.set_xticks([])
-            ax_heat.set_yticks([])
-
-            cb = fig_heat.colorbar(
-                hb,
-                ax=ax_heat
-            )
-
-            cb.set_label(
-                "Densidad"
-            )
-
-            st.pyplot(fig_heat)

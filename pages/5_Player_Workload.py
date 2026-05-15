@@ -25,7 +25,7 @@ st.set_page_config(
 # DB FUNCTIONS
 # =========================================================
 
-@st.cache_data
+@st.cache_data(ttl=60)
 def get_players():
 
     conn = sqlite3.connect(DB_PATH)
@@ -47,7 +47,7 @@ def get_players():
     return df
 
 
-@st.cache_data
+@st.cache_data(ttl=60)
 def get_player_sessions(player_id):
 
     conn = sqlite3.connect(DB_PATH)
